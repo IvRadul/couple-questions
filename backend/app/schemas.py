@@ -48,12 +48,42 @@ class CoupleOut(BaseModel):
         from_attributes = True
 
 
+# ---------- Question packs ----------
+
+class PackOut(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    price_coins: int
+    is_default: bool
+    question_count: int
+    unlocked: bool
+
+    class Config:
+        from_attributes = True
+
+
+class PackUnlockResponse(BaseModel):
+    pack_id: int
+    remaining_coins: int
+
+
 # ---------- Question ----------
+
+class QuestionOptionOut(BaseModel):
+    id: int
+    text: str
+
+    class Config:
+        from_attributes = True
+
 
 class QuestionOut(BaseModel):
     id: int
     text: str
     category: str
+    question_type: str
+    options: List[QuestionOptionOut] = []
     average_rating: float
     rating_count: int
 
@@ -64,50 +94,37 @@ class QuestionOut(BaseModel):
 class QuestionAdminOut(QuestionOut):
     is_active: bool
     report_count: int
+    pack_id: Optional[int]
+
+
+class QuestionOptionCreate(BaseModel):
+    text: str
 
 
 class QuestionCreate(BaseModel):
     text: str
     category: str = "general"
+    question_type: str = "open"
+    pack_id: Optional[int] = None
+    options: List[QuestionOptionCreate] = []
 
 
 # ---------- Game round ----------
-
-class StartRoundResponse(BaseModel):
-    round_id: int
-    question: QuestionOut
-    first_responder_id: str
-    second_responder_id: str
-    your_turn: bool  # можете ли вы отвечать прямо сейчас
-
-
-class SubmitAnswerRequest(BaseModel):
-    round_id: int
-    text: str
-
-
-class AnswerOut(BaseModel):
-    user_id: str
-    text: str
-
-    class Config:
-        from_attributes = True
-
-
-class RoundResultOut(BaseModel):
-    round_id: int
-    question: QuestionOut
-    answers: List[AnswerOut]
-    is_match: bool
-    points_awarded: int
-    coins_awarded: int
-
 
 class RateQuestionRequest(BaseModel):
     question_id: int
     round_id: Optional[int] = None
     stars: Optional[int] = Field(default=None, ge=1, le=5)
     is_report: bool = False
+
+
+class AnswerOut(BaseModel):
+    user_id: str
+    text: str
+    selected_option_id: Optional[int] = None
+
+    class Config:
+        from_attributes = True
 
 
 # ---------- Achievements ----------
@@ -128,6 +145,9 @@ class AchievementOut(BaseModel):
 class HistoryItemOut(BaseModel):
     round_id: int
     question_text: str
+    question_type: str
+    answerer_id: str
+    guesser_id: str
     answers: List[AnswerOut]
     is_match: bool
     completed_at: Optional[datetime]

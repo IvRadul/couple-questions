@@ -7,6 +7,7 @@ interface Props {
   questionText: string;
   answers: AnswerOut[];
   myUserId: string;
+  answererId: string;
   isMatch: boolean;
   pointsAwarded: number;
   coinsAwarded: number;
@@ -20,6 +21,7 @@ export default function ResultModal({
   questionText,
   answers,
   myUserId,
+  answererId,
   isMatch,
   pointsAwarded,
   coinsAwarded,
@@ -28,8 +30,9 @@ export default function ResultModal({
   ratingSubmitted,
   onNextRound,
 }: Props) {
-  const mine = answers.find((a) => a.user_id === myUserId);
-  const partner = answers.find((a) => a.user_id !== myUserId);
+  const answererAnswer = answers.find((a) => a.user_id === answererId);
+  const guesserAnswer = answers.find((a) => a.user_id !== answererId);
+  const iWasAnswerer = myUserId === answererId;
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
@@ -41,12 +44,16 @@ export default function ResultModal({
 
         <div className="space-y-3 mb-4">
           <div className="rounded-xl bg-primary-light/40 p-3">
-            <p className="text-xs text-gray-500 mb-1">Ваш ответ</p>
-            <p className="font-medium">{mine?.text}</p>
+            <p className="text-xs text-gray-500 mb-1">
+              {iWasAnswerer ? "Ваш ответ" : "Ответ партнёра"}
+            </p>
+            <p className="font-medium">{answererAnswer?.text}</p>
           </div>
           <div className="rounded-xl bg-gray-100 p-3">
-            <p className="text-xs text-gray-500 mb-1">Ответ партнёра</p>
-            <p className="font-medium">{partner?.text}</p>
+            <p className="text-xs text-gray-500 mb-1">
+              {iWasAnswerer ? "Догадка партнёра" : "Ваша догадка"}
+            </p>
+            <p className="font-medium">{guesserAnswer?.text}</p>
           </div>
         </div>
 

@@ -1,9 +1,8 @@
 import random
-import re
 import string
-from datetime import datetime
 from typing import Optional, List
 
+from sqlalchemy import false as sa_false
 from sqlalchemy.orm import Session
 
 from app import models
@@ -50,6 +49,8 @@ def join_couple(db: Session, user: models.User, invite_code: str) -> models.Coup
         raise ValueError("Пара с таким кодом не найдена")
     if couple.status == models.CoupleStatus.active:
         raise ValueError("В этой паре уже два участника")
+    if couple.status == models.CoupleStatus.disbanded:
+        raise ValueError("Эта пара больше не активна")
 
     members = db.query(models.User).filter(models.User.couple_id == couple.id).all()
     if any(m.id == user.id for m in members):
@@ -62,6 +63,74 @@ def join_couple(db: Session, user: models.User, invite_code: str) -> models.Coup
     return couple
 
 
+def leave_couple(db: Session, user: models.User) -> None:
+    """Расформировывает текущую пару пользователя. Прогресс (монеты,
+    достижения, статистика) остаётся на пользователях — расформировывается
+    только связь между ними, история старой пары (раунды, пройденные
+    вопросы, открытые паки) в БД сохраняется как есть."""
+    if not user.couple_id:
+        raise ValueError("Вы не состоите в паре")
+
+    couple = db.query(models.Couple).filter(models.Couple.id == user.couple_id).first()
+    if couple is None:
+        user.couple_id = None
+        db.commit()
+        return
+
+    members = db.query(models.User).filter(models.User.couple_id == couple.id).all()
+    for member in members:
+        member.couple_id = None
+    couple.status = models.CoupleStatus.disbanded
+    db.commit()
+
+
+# ---------- Question packs ----------
+
+def get_unlocked_pack_ids(db: Session, couple_id: str) -> List[int]:
+    default_ids = [
+        row[0] for row in db.query(models.QuestionPack.id).filter(models.QuestionPack.is_default.is_(True)).all()
+    ]
+    unlocked_ids = [
+        row[0]
+        for row in db.query(models.CouplePackUnlock.pack_id)
+        .filter(models.CouplePackUnlock.couple_id == couple_id)
+        .all()
+    ]
+    return list(set(default_ids) | set(unlocked_ids))
+
+
+def unlock_pack(db: Session, user: models.User, pack_id: int) -> models.CouplePackUnlock:
+    if not user.couple_id:
+        raise ValueError("Вы не состоите в паре")
+
+    pack = db.query(models.QuestionPack).filter(models.QuestionPack.id == pack_id).first()
+    if pack is None:
+        raise ValueError("Пак не найден")
+    if pack.is_default:
+        raise ValueError("Этот пак уже доступен бесплатно")
+
+    already = (
+        db.query(models.CouplePackUnlock)
+        .filter(
+            models.CouplePackUnlock.couple_id == user.couple_id,
+            models.CouplePackUnlock.pack_id == pack_id,
+        )
+        .first()
+    )
+    if already:
+        raise ValueError("Этот пак уже открыт")
+
+    if user.coins < pack.price_coins:
+        raise ValueError("Недостаточно монет")
+
+    user.coins -= pack.price_coins
+    unlock = models.CouplePackUnlock(couple_id=user.couple_id, pack_id=pack_id, unlocked_by_id=user.id)
+    db.add(unlock)
+    db.commit()
+    db.refresh(unlock)
+    return unlock
+
+
 # ---------- Questions ----------
 
 def pick_random_question(db: Session, couple_id: str) -> Optional[models.Question]:
@@ -71,7 +140,12 @@ def pick_random_question(db: Session, couple_id: str) -> Optional[models.Questio
         .filter(models.CoupleQuestionHistory.couple_id == couple_id)
         .all()
     ]
-    query = db.query(models.Question).filter(models.Question.is_active.is_(True))
+    unlocked_pack_ids = get_unlocked_pack_ids(db, couple_id)
+
+    query = db.query(models.Question).filter(
+        models.Question.is_active.is_(True),
+        models.Question.pack_id.in_(unlocked_pack_ids) if unlocked_pack_ids else sa_false(),
+    )
     if played_ids:
         query = query.filter(~models.Question.id.in_(played_ids))
 
@@ -79,19 +153,6 @@ def pick_random_question(db: Session, couple_id: str) -> Optional[models.Questio
     if not candidates:
         return None
     return random.choice(candidates)
-
-
-def normalize_answer(text: str) -> str:
-    """Нормализация для нечёткого сравнения ответов: нижний регистр,
-    убираем пунктуацию/лишние пробелы."""
-    text = text.strip().lower()
-    text = re.sub(r"[^\w\s]", "", text, flags=re.UNICODE)
-    text = re.sub(r"\s+", " ", text)
-    return text
-
-
-def answers_match(text_a: str, text_b: str) -> bool:
-    return normalize_answer(text_a) == normalize_answer(text_b)
 
 
 # ---------- Achievements ----------

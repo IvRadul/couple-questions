@@ -1,6 +1,6 @@
 import random
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query
 from sqlalchemy.orm import Session
@@ -42,11 +42,17 @@ def get_history(
 
     result = []
     for r in rounds:
-        answers = [AnswerOut(user_id=a.user_id, text=a.text) for a in r.answers]
+        answers = [
+            AnswerOut(user_id=a.user_id, text=a.text, selected_option_id=a.selected_option_id)
+            for a in r.answers
+        ]
         result.append(
             HistoryItemOut(
                 round_id=r.id,
                 question_text=r.question.text,
+                question_type=r.question.question_type.value,
+                answerer_id=r.answerer_id,
+                guesser_id=r.guesser_id,
                 answers=answers,
                 is_match=bool(r.is_match),
                 completed_at=r.completed_at,
@@ -80,43 +86,79 @@ def my_achievements(
 # --------------------------------------------------------------------------
 # WebSocket: синхронизация раунда в реальном времени
 #
+# Роли на раунд назначаются случайно при старте:
+#   answerer — отвечает на вопрос "про себя" первым.
+#   guesser  — пытается угадать ответ партнёра, не видя его.
+#
+# Разрешение раунда зависит от типа вопроса:
+#   question_type == "choice" -> сравнение вариантов автоматическое.
+#   question_type == "open"   -> после догадки guesser'а решение о совпадении
+#                                  принимает вручную answerer (кнопка validate_answer).
+#
 # Протокол (JSON-сообщения):
 #   Клиент -> Сервер:
 #     {"action": "start_round"}
-#     {"action": "submit_answer", "round_id": 1, "text": "..."}
+#     {"action": "submit_answer", "round_id": 1, "text": "...", "option_id": null}
+#     {"action": "validate_answer", "round_id": 1, "is_match": true}
 #
 #   Сервер -> Клиент(ы):
-#     {"action": "round_started", "round_id", "question", "first_responder_id", "second_responder_id"}
-#     {"action": "answer_saved"}                      -> только тому, кто только что ответил первым
-#     {"action": "your_turn", "round_id"}              -> второму партнёру, когда можно отвечать
-#     {"action": "round_result", "round_id", "question", "answers", "is_match", "points_awarded", "coins_awarded"}
+#     {"action": "round_started", "round_id", "question": {..., "question_type", "options"},
+#      "answerer_id", "guesser_id"}
+#     {"action": "answer_saved", "round_id"}                 -> отвечавшему, когда его ответ сохранён
+#     {"action": "your_turn", "round_id"}                    -> угадывающему, когда можно отвечать
+#     {"action": "awaiting_validation", "round_id"}           -> угадывающему, пока идёт ручная проверка
+#     {"action": "validate_request", "round_id", "your_answer", "guess"}  -> отвечавшему, для проверки
+#     {"action": "round_result", "round_id", "question", "answers", "is_match",
+#      "points_awarded", "coins_awarded"}
 #     {"action": "new_achievement", "achievement": {...}}
 #     {"action": "error", "detail": "..."}
 # --------------------------------------------------------------------------
+
+def _question_payload(question: models.Question) -> dict:
+    return {
+        "id": question.id,
+        "text": question.text,
+        "category": question.category,
+        "question_type": question.question_type.value,
+        "options": [{"id": o.id, "text": o.text} for o in question.options],
+    }
+
 
 def _build_round_sync_messages(game_round: models.GameRound, target_user_id: str) -> list:
     """Собирает сообщения, которые нужно отправить клиенту, чтобы он
     догнал текущее состояние уже идущего раунда (например, если клиент
     подключился/переподключился после того, как раунд был запущен, и
     пропустил исходную рассылку 'round_started')."""
-    question = game_round.question
     messages: list = [
         {
             "action": "round_started",
             "round_id": game_round.id,
-            "question": {"id": question.id, "text": question.text, "category": question.category},
-            "first_responder_id": game_round.first_responder_id,
-            "second_responder_id": game_round.second_responder_id,
+            "question": _question_payload(game_round.question),
+            "answerer_id": game_round.answerer_id,
+            "guesser_id": game_round.guesser_id,
         }
     ]
 
-    if game_round.status == models.RoundStatus.waiting_second:
-        if target_user_id == game_round.second_responder_id:
-            # Первый уже ответил, сейчас очередь этого пользователя
+    if game_round.status == models.RoundStatus.waiting_guess:
+        if target_user_id == game_round.guesser_id:
             messages.append({"action": "your_turn", "round_id": game_round.id})
-        elif target_user_id == game_round.first_responder_id:
-            # Этот пользователь уже отвечал — переводим его в состояние ожидания
+        elif target_user_id == game_round.answerer_id:
             messages.append({"action": "answer_saved", "round_id": game_round.id})
+
+    elif game_round.status == models.RoundStatus.waiting_validation:
+        answerer_answer = next((a for a in game_round.answers if a.user_id == game_round.answerer_id), None)
+        guesser_answer = next((a for a in game_round.answers if a.user_id == game_round.guesser_id), None)
+        if target_user_id == game_round.answerer_id and answerer_answer and guesser_answer:
+            messages.append(
+                {
+                    "action": "validate_request",
+                    "round_id": game_round.id,
+                    "your_answer": answerer_answer.text,
+                    "guess": guesser_answer.text,
+                }
+            )
+        elif target_user_id == game_round.guesser_id:
+            messages.append({"action": "awaiting_validation", "round_id": game_round.id})
 
     return messages
 
@@ -170,6 +212,8 @@ async def websocket_endpoint(
                     await _handle_start_round(db, couple, user)
                 elif action == "submit_answer":
                     await _handle_submit_answer(db, couple, user, message)
+                elif action == "validate_answer":
+                    await _handle_validate_answer(db, couple, user, message)
                 else:
                     await manager.send_to_user(
                         couple_id, user.id, {"action": "error", "detail": f"Неизвестное действие: {action}"}
@@ -210,18 +254,18 @@ async def _handle_start_round(db: Session, couple: models.Couple, requester: mod
         await manager.send_to_user(
             couple.id,
             requester.id,
-            {"action": "error", "detail": "Вопросы закончились — пара прошла всю базу!"},
+            {"action": "error", "detail": "Вопросы закончились — откройте новый пак или подождите новых!"},
         )
         return
 
-    first, second = random.sample(members, 2)
+    answerer, guesser = random.sample(members, 2, counts=None)
 
     game_round = models.GameRound(
         couple_id=couple.id,
         question_id=question.id,
-        first_responder_id=first.id,
-        second_responder_id=second.id,
-        status=models.RoundStatus.waiting_first,
+        answerer_id=answerer.id,
+        guesser_id=guesser.id,
+        status=models.RoundStatus.waiting_answer,
     )
     db.add(game_round)
     db.commit()
@@ -230,11 +274,22 @@ async def _handle_start_round(db: Session, couple: models.Couple, requester: mod
     payload = {
         "action": "round_started",
         "round_id": game_round.id,
-        "question": {"id": question.id, "text": question.text, "category": question.category},
-        "first_responder_id": first.id,
-        "second_responder_id": second.id,
+        "question": _question_payload(question),
+        "answerer_id": answerer.id,
+        "guesser_id": guesser.id,
     }
     await manager.broadcast_to_couple(couple.id, payload)
+
+
+def _validate_submitted_answer(question: models.Question, text: str, option_id) -> Optional[models.QuestionOption]:
+    """Для вопросов типа 'choice' проверяет, что option_id указывает на
+    вариант этого вопроса, и возвращает выбранный вариант."""
+    if question.question_type != models.QuestionType.choice:
+        return None
+    option = next((o for o in question.options if o.id == option_id), None)
+    if option is None:
+        raise ValueError("Нужно выбрать один из предложенных вариантов")
+    return option
 
 
 async def _handle_submit_answer(
@@ -242,10 +297,7 @@ async def _handle_submit_answer(
 ) -> None:
     round_id = message.get("round_id")
     text = (message.get("text") or "").strip()
-
-    if not text:
-        await manager.send_to_user(couple.id, user.id, {"action": "error", "detail": "Ответ не может быть пустым"})
-        return
+    option_id = message.get("option_id")
 
     game_round = (
         db.query(models.GameRound)
@@ -256,10 +308,24 @@ async def _handle_submit_answer(
         await manager.send_to_user(couple.id, user.id, {"action": "error", "detail": "Раунд не найден"})
         return
 
+    question = game_round.question
+
+    selected_option = None
+    if question.question_type == models.QuestionType.choice:
+        try:
+            selected_option = _validate_submitted_answer(question, text, option_id)
+        except ValueError as e:
+            await manager.send_to_user(couple.id, user.id, {"action": "error", "detail": str(e)})
+            return
+        text = selected_option.text
+    elif not text:
+        await manager.send_to_user(couple.id, user.id, {"action": "error", "detail": "Ответ не может быть пустым"})
+        return
+
     now = datetime.utcnow()
 
-    if game_round.status == models.RoundStatus.waiting_first:
-        if user.id != game_round.first_responder_id:
+    if game_round.status == models.RoundStatus.waiting_answer:
+        if user.id != game_round.answerer_id:
             await manager.send_to_user(
                 couple.id, user.id, {"action": "error", "detail": "Сейчас не ваша очередь отвечать"}
             )
@@ -267,101 +333,177 @@ async def _handle_submit_answer(
 
         response_time = int((now - game_round.created_at).total_seconds())
         answer = models.Answer(
-            round_id=game_round.id, user_id=user.id, text=text, response_time_seconds=response_time
+            round_id=game_round.id,
+            user_id=user.id,
+            text=text,
+            selected_option_id=selected_option.id if selected_option else None,
+            response_time_seconds=response_time,
         )
         db.add(answer)
-        game_round.status = models.RoundStatus.waiting_second
+        game_round.status = models.RoundStatus.waiting_guess
         db.commit()
 
         await manager.send_to_user(couple.id, user.id, {"action": "answer_saved", "round_id": game_round.id})
         await manager.send_to_user(
-            couple.id, game_round.second_responder_id, {"action": "your_turn", "round_id": game_round.id}
+            couple.id, game_round.guesser_id, {"action": "your_turn", "round_id": game_round.id}
         )
         return
 
-    if game_round.status == models.RoundStatus.waiting_second:
-        if user.id != game_round.second_responder_id:
+    if game_round.status == models.RoundStatus.waiting_guess:
+        if user.id != game_round.guesser_id:
             await manager.send_to_user(
                 couple.id, user.id, {"action": "error", "detail": "Сейчас не ваша очередь отвечать"}
             )
             return
 
-        first_answer = (
+        answerer_answer = (
             db.query(models.Answer)
-            .filter(models.Answer.round_id == game_round.id, models.Answer.user_id == game_round.first_responder_id)
+            .filter(models.Answer.round_id == game_round.id, models.Answer.user_id == game_round.answerer_id)
             .first()
         )
-        response_time = int((now - first_answer.answered_at).total_seconds())
-        second_answer = models.Answer(
-            round_id=game_round.id, user_id=user.id, text=text, response_time_seconds=response_time
+        response_time = int((now - answerer_answer.answered_at).total_seconds())
+        guess_answer = models.Answer(
+            round_id=game_round.id,
+            user_id=user.id,
+            text=text,
+            selected_option_id=selected_option.id if selected_option else None,
+            response_time_seconds=response_time,
         )
-        db.add(second_answer)
+        db.add(guess_answer)
 
-        is_match = crud.answers_match(first_answer.text, text)
-        game_round.status = models.RoundStatus.completed
-        game_round.is_match = is_match
-        game_round.completed_at = now
-        db.add(
-            models.CoupleQuestionHistory(couple_id=couple.id, question_id=game_round.question_id)
-        )
-
-        first_user = db.query(models.User).filter(models.User.id == game_round.first_responder_id).first()
-        second_user = user
-
-        points_awarded = MATCH_POINTS if is_match else 0
-        coins_awarded = MATCH_COINS if is_match else NO_MATCH_COINS
-
-        for u, resp_time in (
-            (first_user, first_answer.response_time_seconds),
-            (second_user, second_answer.response_time_seconds),
-        ):
-            u.coins += coins_awarded
-            u.total_games += 1
-            if is_match:
-                u.current_match_streak += 1
-                u.best_match_streak = max(u.best_match_streak, u.current_match_streak)
-            else:
-                u.current_match_streak = 0
-            if resp_time is not None and (u.fastest_answer_seconds is None or resp_time < u.fastest_answer_seconds):
-                u.fastest_answer_seconds = resp_time
-
-        db.commit()
-
-        question = game_round.question
-        result_payload = {
-            "action": "round_result",
-            "round_id": game_round.id,
-            "question": {"id": question.id, "text": question.text, "category": question.category},
-            "answers": [
-                {"user_id": first_user.id, "text": first_answer.text},
-                {"user_id": second_user.id, "text": second_answer.text},
-            ],
-            "is_match": is_match,
-            "points_awarded": points_awarded,
-            "coins_awarded": coins_awarded,
-        }
-        await manager.broadcast_to_couple(couple.id, result_payload)
-
-        # Проверка достижений для обоих участников
-        for u, resp_time in (
-            (first_user, first_answer.response_time_seconds),
-            (second_user, second_answer.response_time_seconds),
-        ):
-            new_achievements = crud.check_achievements_after_round(db, u, resp_time)
-            for ach in new_achievements:
-                await manager.send_to_user(
-                    couple.id,
-                    u.id,
-                    {
-                        "action": "new_achievement",
-                        "achievement": {
-                            "code": ach.code,
-                            "title": ach.title,
-                            "description": ach.description,
-                            "coin_reward": ach.coin_reward,
-                        },
-                    },
-                )
+        if question.question_type == models.QuestionType.choice:
+            # Варианты фиксированы — можно сравнивать автоматически.
+            is_match = (
+                answerer_answer.selected_option_id is not None
+                and answerer_answer.selected_option_id == guess_answer.selected_option_id
+            )
+            db.commit()
+            await _finalize_round(db, couple, game_round, answerer_answer, guess_answer, is_match)
+        else:
+            # Свободный текст — финальное решение о совпадении принимает answerer вручную.
+            game_round.status = models.RoundStatus.waiting_validation
+            db.commit()
+            await manager.send_to_user(
+                couple.id,
+                game_round.answerer_id,
+                {
+                    "action": "validate_request",
+                    "round_id": game_round.id,
+                    "your_answer": answerer_answer.text,
+                    "guess": guess_answer.text,
+                },
+            )
+            await manager.send_to_user(
+                couple.id, game_round.guesser_id, {"action": "awaiting_validation", "round_id": game_round.id}
+            )
         return
 
     await manager.send_to_user(couple.id, user.id, {"action": "error", "detail": "Раунд уже завершён"})
+
+
+async def _handle_validate_answer(
+    db: Session, couple: models.Couple, user: models.User, message: dict
+) -> None:
+    round_id = message.get("round_id")
+    is_match = bool(message.get("is_match"))
+
+    game_round = (
+        db.query(models.GameRound)
+        .filter(models.GameRound.id == round_id, models.GameRound.couple_id == couple.id)
+        .first()
+    )
+    if game_round is None:
+        await manager.send_to_user(couple.id, user.id, {"action": "error", "detail": "Раунд не найден"})
+        return
+
+    if game_round.status != models.RoundStatus.waiting_validation:
+        await manager.send_to_user(couple.id, user.id, {"action": "error", "detail": "Раунд не ожидает проверки"})
+        return
+
+    if user.id != game_round.answerer_id:
+        await manager.send_to_user(
+            couple.id, user.id, {"action": "error", "detail": "Подтвердить совпадение может только отвечавший"}
+        )
+        return
+
+    answerer_answer = next((a for a in game_round.answers if a.user_id == game_round.answerer_id), None)
+    guess_answer = next((a for a in game_round.answers if a.user_id == game_round.guesser_id), None)
+    if answerer_answer is None or guess_answer is None:
+        await manager.send_to_user(couple.id, user.id, {"action": "error", "detail": "Не найдены ответы раунда"})
+        return
+
+    await _finalize_round(db, couple, game_round, answerer_answer, guess_answer, is_match)
+
+
+async def _finalize_round(
+    db: Session,
+    couple: models.Couple,
+    game_round: models.GameRound,
+    answerer_answer: models.Answer,
+    guess_answer: models.Answer,
+    is_match: bool,
+) -> None:
+    now = datetime.utcnow()
+    game_round.status = models.RoundStatus.completed
+    game_round.is_match = is_match
+    game_round.completed_at = now
+    db.add(models.CoupleQuestionHistory(couple_id=couple.id, question_id=game_round.question_id))
+
+    answerer = db.query(models.User).filter(models.User.id == game_round.answerer_id).first()
+    guesser = db.query(models.User).filter(models.User.id == game_round.guesser_id).first()
+
+    points_awarded = MATCH_POINTS if is_match else 0
+    coins_awarded = MATCH_COINS if is_match else NO_MATCH_COINS
+
+    for u, resp_time in (
+        (answerer, answerer_answer.response_time_seconds),
+        (guesser, guess_answer.response_time_seconds),
+    ):
+        u.coins += coins_awarded
+        u.total_games += 1
+        if is_match:
+            u.current_match_streak += 1
+            u.best_match_streak = max(u.best_match_streak, u.current_match_streak)
+        else:
+            u.current_match_streak = 0
+        if resp_time is not None and (u.fastest_answer_seconds is None or resp_time < u.fastest_answer_seconds):
+            u.fastest_answer_seconds = resp_time
+
+    db.commit()
+
+    question = game_round.question
+    result_payload = {
+        "action": "round_result",
+        "round_id": game_round.id,
+        "question": _question_payload(question),
+        "answers": [
+            {"user_id": answerer.id, "text": answerer_answer.text, "selected_option_id": answerer_answer.selected_option_id},
+            {"user_id": guesser.id, "text": guess_answer.text, "selected_option_id": guess_answer.selected_option_id},
+        ],
+        "answerer_id": answerer.id,
+        "guesser_id": guesser.id,
+        "is_match": is_match,
+        "points_awarded": points_awarded,
+        "coins_awarded": coins_awarded,
+    }
+    await manager.broadcast_to_couple(couple.id, result_payload)
+
+    for u, resp_time in (
+        (answerer, answerer_answer.response_time_seconds),
+        (guesser, guess_answer.response_time_seconds),
+    ):
+        new_achievements = crud.check_achievements_after_round(db, u, resp_time)
+        for ach in new_achievements:
+            await manager.send_to_user(
+                couple.id,
+                u.id,
+                {
+                    "action": "new_achievement",
+                    "achievement": {
+                        "code": ach.code,
+                        "title": ach.title,
+                        "description": ach.description,
+                        "coin_reward": ach.coin_reward,
+                    },
+                },
+            )

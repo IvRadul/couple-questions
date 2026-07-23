@@ -58,6 +58,23 @@ def join_couple(
     return TokenResponse(access_token=token, user_id=user.id, couple_id=couple.id)
 
 
+@router.post("/leave", response_model=TokenResponse)
+def leave_couple(
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Расформировывает текущую пару. Монеты, достижения и статистика
+    пользователя сохраняются — после этого можно создать новую пару
+    или присоединиться к чужому коду."""
+    try:
+        crud.leave_couple(db, user)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    token = create_access_token(user_id=user.id, couple_id=None)
+    return TokenResponse(access_token=token, user_id=user.id, couple_id=None)
+
+
 @router.get("/me", response_model=CoupleOut)
 def get_my_couple(
     user: models.User = Depends(get_current_user),

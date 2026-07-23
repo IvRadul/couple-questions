@@ -1,5 +1,5 @@
 import { API_BASE_URL, ensureAuthenticated, getToken, saveSession, getUserId } from "./auth";
-import type { CoupleOut, QuestionOut, HistoryItemOut, AchievementOut, UserOut } from "@/types";
+import type { CoupleOut, QuestionOut, HistoryItemOut, AchievementOut, UserOut, PackOut } from "@/types";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   await ensureAuthenticated();
@@ -53,7 +53,15 @@ export const api = {
         body: JSON.stringify({ invite_code: inviteCode }),
       }
     );
-    // Обновляем локально сохранённый токен — теперь в нём есть couple_id
+    saveSession(data.access_token, data.user_id, data.couple_id);
+    return data;
+  },
+
+  leaveCouple: async () => {
+    const data = await request<{ access_token: string; user_id: string; couple_id: string | null }>(
+      "/couples/leave",
+      { method: "POST" }
+    );
     saveSession(data.access_token, data.user_id, data.couple_id);
     return data;
   },
@@ -75,6 +83,13 @@ export const api = {
     request<{ status: string }>("/questions/rate", {
       method: "POST",
       body: JSON.stringify(payload),
+    }),
+
+  getPacks: () => request<PackOut[]>("/packs"),
+
+  unlockPack: (packId: number) =>
+    request<{ pack_id: number; remaining_coins: number }>(`/packs/${packId}/unlock`, {
+      method: "POST",
     }),
 };
 

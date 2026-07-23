@@ -23,7 +23,9 @@ def gen_uuid() -> str:
 
 
 class User(Base):
-    """Анонимный пользователь. Создаётся автоматически при первом обращении."""
+    """Анонимный пользователь. Создаётся автоматически при первом обращении.
+    Весь прогресс (монеты, достижения, статистика) хранится на пользователе,
+    а не на паре — поэтому смена/расформирование пары не обнуляет прогресс."""
 
     __tablename__ = "users"
 
@@ -39,6 +41,7 @@ class User(Base):
     answers = relationship("Answer", back_populates="user")
     ratings = relationship("Rating", back_populates="user")
     achievements = relationship("UserAchievement", back_populates="user")
+    pack_unlocks = relationship("CouplePackUnlock", back_populates="unlocked_by")
 
     # Простая счётная статистика, нужна для проверки условий достижений
     total_games = Column(Integer, default=0, nullable=False)
@@ -49,12 +52,16 @@ class User(Base):
 
 
 class CoupleStatus(str, enum.Enum):
-    pending = "pending"  # код создан, ждём второго партнёра
-    active = "active"    # оба партнёра подключены
+    pending = "pending"      # код создан, ждём второго партнёра
+    active = "active"        # оба партнёра подключены
+    disbanded = "disbanded"  # пара расформирована (кто-то из партнёров ушёл)
 
 
 class Couple(Base):
-    """Пара из двух пользователей, связанных по коду приглашения."""
+    """Пара из двух пользователей, связанных по коду приглашения.
+    Пользователь может со временем состоять в нескольких парах по очереди —
+    старые пары остаются в базе как есть (со своей историей вопросов и
+    раундов), просто пользователь на них больше не ссылается."""
 
     __tablename__ = "couples"
 
@@ -66,6 +73,29 @@ class Couple(Base):
     members = relationship("User", back_populates="couple", foreign_keys=[User.couple_id])
     history = relationship("CoupleQuestionHistory", back_populates="couple")
     rounds = relationship("GameRound", back_populates="couple")
+    pack_unlocks = relationship("CouplePackUnlock", back_populates="couple")
+
+
+class QuestionType(str, enum.Enum):
+    open = "open"      # Тип 1: свободный текстовый ответ, совпадение подтверждает отвечавший вручную
+    choice = "choice"  # Тип 2: выбор из готовых вариантов, совпадение считается автоматически
+
+
+class QuestionPack(Base):
+    """Набор (пак) вопросов на одну тему. Стартовый пак бесплатный,
+    остальные открываются за монеты (за пару, не за отдельного пользователя)."""
+
+    __tablename__ = "question_packs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(128), nullable=False)
+    description = Column(String(256), nullable=True)
+    price_coins = Column(Integer, default=0, nullable=False)
+    is_default = Column(Boolean, default=False, nullable=False)
+    sort_order = Column(Integer, default=0, nullable=False)
+
+    questions = relationship("Question", back_populates="pack")
+    unlocks = relationship("CouplePackUnlock", back_populates="pack")
 
 
 class Question(Base):
@@ -76,6 +106,8 @@ class Question(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     text = Column(Text, nullable=False)
     category = Column(String(64), default="general", nullable=False)
+    question_type = Column(Enum(QuestionType), default=QuestionType.open, nullable=False)
+    pack_id = Column(Integer, ForeignKey("question_packs.id"), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -84,13 +116,47 @@ class Question(Base):
     rating_count = Column(Integer, default=0, nullable=False)
     report_count = Column(Integer, default=0, nullable=False)
 
+    pack = relationship("QuestionPack", back_populates="questions")
     ratings = relationship("Rating", back_populates="question")
+    options = relationship(
+        "QuestionOption", back_populates="question", order_by="QuestionOption.sort_order"
+    )
 
     @property
     def average_rating(self) -> float:
         if self.rating_count == 0:
             return 0.0
         return round(self.rating_sum / self.rating_count, 2)
+
+
+class QuestionOption(Base):
+    """Вариант ответа для вопроса типа 'choice' (Тип 2)."""
+
+    __tablename__ = "question_options"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    question_id = Column(Integer, ForeignKey("questions.id"), nullable=False)
+    text = Column(String(256), nullable=False)
+    sort_order = Column(Integer, default=0, nullable=False)
+
+    question = relationship("Question", back_populates="options")
+
+
+class CouplePackUnlock(Base):
+    """Какие паки вопросов пара уже открыла за монеты."""
+
+    __tablename__ = "couple_pack_unlocks"
+    __table_args__ = (UniqueConstraint("couple_id", "pack_id", name="uq_couple_pack"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    couple_id = Column(String, ForeignKey("couples.id"), nullable=False)
+    pack_id = Column(Integer, ForeignKey("question_packs.id"), nullable=False)
+    unlocked_by_id = Column(String, ForeignKey("users.id"), nullable=False)
+    unlocked_at = Column(DateTime, default=datetime.utcnow)
+
+    couple = relationship("Couple", back_populates="pack_unlocks")
+    pack = relationship("QuestionPack", back_populates="unlocks")
+    unlocked_by = relationship("User", back_populates="pack_unlocks")
 
 
 class CoupleQuestionHistory(Base):
@@ -109,13 +175,16 @@ class CoupleQuestionHistory(Base):
 
 
 class RoundStatus(str, enum.Enum):
-    waiting_first = "waiting_first"    # ждём ответа того, кто отвечает первым
-    waiting_second = "waiting_second"  # первый ответил, ждём второго
+    waiting_answer = "waiting_answer"          # ждём ответа того, кто отвечает "за себя"
+    waiting_guess = "waiting_guess"            # отвечавший ответил, ждём догадку второго партнёра
+    waiting_validation = "waiting_validation"  # только для типа 'open': ждём ручную проверку отвечавшего
     completed = "completed"
 
 
 class GameRound(Base):
-    """Один раунд игры: вопрос, кто отвечает первым, статус, результат."""
+    """Один раунд игры. Роли на раунд назначаются случайно:
+    answerer — отвечает на вопрос "про себя" первым;
+    guesser — пытается угадать, что ответил партнёр, не видя его ответа."""
 
     __tablename__ = "game_rounds"
 
@@ -123,10 +192,10 @@ class GameRound(Base):
     couple_id = Column(String, ForeignKey("couples.id"), nullable=False)
     question_id = Column(Integer, ForeignKey("questions.id"), nullable=False)
 
-    first_responder_id = Column(String, ForeignKey("users.id"), nullable=False)
-    second_responder_id = Column(String, ForeignKey("users.id"), nullable=False)
+    answerer_id = Column(String, ForeignKey("users.id"), nullable=False)
+    guesser_id = Column(String, ForeignKey("users.id"), nullable=False)
 
-    status = Column(Enum(RoundStatus), default=RoundStatus.waiting_first, nullable=False)
+    status = Column(Enum(RoundStatus), default=RoundStatus.waiting_answer, nullable=False)
     is_match = Column(Boolean, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -138,7 +207,9 @@ class GameRound(Base):
 
 
 class Answer(Base):
-    """Ответ одного пользователя в рамках конкретного раунда."""
+    """Ответ одного пользователя в рамках конкретного раунда.
+    Для вопросов типа 'choice' используется selected_option_id,
+    для 'open' — свободный текст в поле text."""
 
     __tablename__ = "answers"
     __table_args__ = (UniqueConstraint("round_id", "user_id", name="uq_round_user"),)
@@ -147,11 +218,13 @@ class Answer(Base):
     round_id = Column(Integer, ForeignKey("game_rounds.id"), nullable=False)
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
     text = Column(Text, nullable=False)
+    selected_option_id = Column(Integer, ForeignKey("question_options.id"), nullable=True)
     answered_at = Column(DateTime, default=datetime.utcnow)
     response_time_seconds = Column(Integer, nullable=True)
 
     round = relationship("GameRound", back_populates="answers")
     user = relationship("User", back_populates="answers")
+    selected_option = relationship("QuestionOption")
 
 
 class Rating(Base):

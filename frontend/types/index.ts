@@ -8,10 +8,19 @@ export interface UserOut {
   best_match_streak: number;
 }
 
+export type QuestionType = "open" | "choice";
+
+export interface QuestionOptionOut {
+  id: number;
+  text: string;
+}
+
 export interface QuestionOut {
   id: number;
   text: string;
   category: string;
+  question_type: QuestionType;
+  options: QuestionOptionOut[];
   average_rating: number;
   rating_count: number;
 }
@@ -19,18 +28,32 @@ export interface QuestionOut {
 export interface CoupleOut {
   id: string;
   invite_code: string;
-  status: "pending" | "active";
+  status: "pending" | "active" | "disbanded";
   members: UserOut[];
+}
+
+export interface PackOut {
+  id: number;
+  name: string;
+  description: string | null;
+  price_coins: number;
+  is_default: boolean;
+  question_count: number;
+  unlocked: boolean;
 }
 
 export interface AnswerOut {
   user_id: string;
   text: string;
+  selected_option_id: number | null;
 }
 
 export interface HistoryItemOut {
   round_id: number;
   question_text: string;
+  question_type: QuestionType;
+  answerer_id: string;
+  guesser_id: string;
   answers: AnswerOut[];
   is_match: boolean;
   completed_at: string | null;
@@ -46,21 +69,33 @@ export interface AchievementOut {
 
 // ---------- WebSocket message shapes ----------
 
+export interface RoundQuestionPayload {
+  id: number;
+  text: string;
+  category: string;
+  question_type: QuestionType;
+  options: QuestionOptionOut[];
+}
+
 export type WsServerMessage =
   | {
       action: "round_started";
       round_id: number;
-      question: { id: number; text: string; category: string };
-      first_responder_id: string;
-      second_responder_id: string;
+      question: RoundQuestionPayload;
+      answerer_id: string;
+      guesser_id: string;
     }
   | { action: "answer_saved"; round_id: number }
   | { action: "your_turn"; round_id: number }
+  | { action: "awaiting_validation"; round_id: number }
+  | { action: "validate_request"; round_id: number; your_answer: string; guess: string }
   | {
       action: "round_result";
       round_id: number;
-      question: { id: number; text: string; category: string };
+      question: RoundQuestionPayload;
       answers: AnswerOut[];
+      answerer_id: string;
+      guesser_id: string;
       is_match: boolean;
       points_awarded: number;
       coins_awarded: number;
@@ -73,4 +108,5 @@ export type WsServerMessage =
 
 export type WsClientMessage =
   | { action: "start_round" }
-  | { action: "submit_answer"; round_id: number; text: string };
+  | { action: "submit_answer"; round_id: number; text: string; option_id?: number | null }
+  | { action: "validate_answer"; round_id: number; is_match: boolean };

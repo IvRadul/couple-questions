@@ -41,8 +41,9 @@ export default function HistoryPage() {
 
       <div className="space-y-3">
         {items.map((item) => {
-          const mine = item.answers.find((a) => a.user_id === myUserId);
-          const partner = item.answers.find((a) => a.user_id !== myUserId);
+          const answererAnswer = item.answers.find((a) => a.user_id === item.answerer_id);
+          const guesserAnswer = item.answers.find((a) => a.user_id === item.guesser_id);
+          const iWasAnswerer = item.answerer_id === myUserId;
           return (
             <div key={item.round_id} className="card">
               <div className="flex items-center justify-between mb-2">
@@ -51,17 +52,19 @@ export default function HistoryPage() {
                 </span>
                 <span className="text-xs text-gray-400">
                   {item.completed_at ? new Date(item.completed_at).toLocaleString("ru-RU") : ""}
+                  {" · "}
+                  {item.question_type === "choice" ? "варианты" : "своб. ответ"}
                 </span>
               </div>
               <p className="font-medium mb-2">{item.question_text}</p>
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <div className="rounded-lg bg-primary-light/40 p-2">
-                  <p className="text-xs text-gray-500">Вы</p>
-                  <p>{mine?.text}</p>
+                  <p className="text-xs text-gray-500">{iWasAnswerer ? "Вы отвечали" : "Партнёр отвечал"}</p>
+                  <p>{answererAnswer?.text}</p>
                 </div>
                 <div className="rounded-lg bg-gray-100 p-2">
-                  <p className="text-xs text-gray-500">Партнёр</p>
-                  <p>{partner?.text}</p>
+                  <p className="text-xs text-gray-500">{iWasAnswerer ? "Партнёр угадывал" : "Вы угадывали"}</p>
+                  <p>{guesserAnswer?.text}</p>
                 </div>
               </div>
             </div>

@@ -78,8 +78,22 @@ def admin_create_question(
     db: Session = Depends(get_db),
 ):
     _require_admin(user)
-    question = models.Question(text=payload.text, category=payload.category)
+
+    if payload.question_type == "choice" and len(payload.options) < 2:
+        raise HTTPException(status_code=400, detail="Вопрос с вариантами должен иметь минимум 2 варианта")
+
+    question = models.Question(
+        text=payload.text,
+        category=payload.category,
+        question_type=models.QuestionType(payload.question_type),
+        pack_id=payload.pack_id,
+    )
     db.add(question)
+    db.flush()
+
+    for i, opt in enumerate(payload.options):
+        db.add(models.QuestionOption(question_id=question.id, text=opt.text, sort_order=i))
+
     db.commit()
     db.refresh(question)
     return question
@@ -96,8 +110,19 @@ def admin_edit_question(
     question = db.query(models.Question).filter(models.Question.id == question_id).first()
     if question is None:
         raise HTTPException(status_code=404, detail="Вопрос не найден")
+
     question.text = payload.text
     question.category = payload.category
+    question.question_type = models.QuestionType(payload.question_type)
+    question.pack_id = payload.pack_id
+
+    if payload.question_type == "choice":
+        if len(payload.options) < 2:
+            raise HTTPException(status_code=400, detail="Вопрос с вариантами должен иметь минимум 2 варианта")
+        db.query(models.QuestionOption).filter(models.QuestionOption.question_id == question.id).delete()
+        for i, opt in enumerate(payload.options):
+            db.add(models.QuestionOption(question_id=question.id, text=opt.text, sort_order=i))
+
     db.commit()
     db.refresh(question)
     return question
