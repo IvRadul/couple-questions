@@ -11,12 +11,14 @@ import AnswerInput from "@/components/AnswerInput";
 import ResultModal from "@/components/ResultModal";
 import AchievementToast from "@/components/AchievementToast";
 import ValidationPanel from "@/components/ValidationPanel";
-import type { WsServerMessage, AnswerOut, RoundQuestionPayload } from "@/types";
+import type { WsServerMessage, AnswerOut, RoundQuestionPayload, PackOut } from "@/types";
 
 type RoundStatus = "waiting_answer" | "waiting_guess" | "waiting_validation";
 
-type RoundState =
+type GameState =
   | { phase: "idle" }
+  | { phase: "invite_sent"; packId: number; packName: string }
+  | { phase: "invite_received"; packId: number; packName: string; proposerId: string }
   | {
       phase: "in_progress";
       roundId: number;
@@ -50,19 +52,40 @@ export default function GamePage() {
   const socketRef = useRef<ReturnType<typeof connectGameSocket> | null>(null);
 
   const [status, setStatus] = useState<"connecting" | "open" | "closed">("connecting");
-  const [round, setRound] = useState<RoundState>({ phase: "idle" });
+  const [game, setGame] = useState<GameState>({ phase: "idle" });
   const [myUserId, setMyUserId] = useState<string>("");
   const [ratingSubmitted, setRatingSubmitted] = useState(false);
   const [achievementQueue, setAchievementQueue] = useState<AchievementPopup[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [coins, setCoins] = useState<number | null>(null);
   const [leaving, setLeaving] = useState(false);
+  const [unlockedPacks, setUnlockedPacks] = useState<PackOut[]>([]);
+  const [packsLoading, setPacksLoading] = useState(true);
 
   const handleMessage = useCallback((msg: WsServerMessage) => {
     switch (msg.action) {
+      case "round_proposed": {
+        const uid = getUserId() || "";
+        if (msg.proposer_id === uid) {
+          setGame({ phase: "invite_sent", packId: msg.pack_id, packName: msg.pack_name });
+        } else {
+          setGame({
+            phase: "invite_received",
+            packId: msg.pack_id,
+            packName: msg.pack_name,
+            proposerId: msg.proposer_id,
+          });
+        }
+        break;
+      }
+      case "round_declined": {
+        setError("Партнёр отклонил игру с этим паком — выберите другой.");
+        setGame({ phase: "idle" });
+        break;
+      }
       case "round_started": {
         setRatingSubmitted(false);
-        setRound({
+        setGame({
           phase: "in_progress",
           roundId: msg.round_id,
           question: msg.question,
@@ -73,19 +96,19 @@ export default function GamePage() {
         break;
       }
       case "answer_saved": {
-        setRound((prev) => (prev.phase === "in_progress" ? { ...prev, status: "waiting_guess" } : prev));
+        setGame((prev) => (prev.phase === "in_progress" ? { ...prev, status: "waiting_guess" } : prev));
         break;
       }
       case "your_turn": {
-        setRound((prev) => (prev.phase === "in_progress" ? { ...prev, status: "waiting_guess" } : prev));
+        setGame((prev) => (prev.phase === "in_progress" ? { ...prev, status: "waiting_guess" } : prev));
         break;
       }
       case "awaiting_validation": {
-        setRound((prev) => (prev.phase === "in_progress" ? { ...prev, status: "waiting_validation" } : prev));
+        setGame((prev) => (prev.phase === "in_progress" ? { ...prev, status: "waiting_validation" } : prev));
         break;
       }
       case "validate_request": {
-        setRound((prev) =>
+        setGame((prev) =>
           prev.phase === "in_progress"
             ? {
                 ...prev,
@@ -97,7 +120,7 @@ export default function GamePage() {
         break;
       }
       case "round_result": {
-        setRound({
+        setGame({
           phase: "result",
           roundId: msg.round_id,
           question: msg.question,
@@ -121,6 +144,18 @@ export default function GamePage() {
     }
   }, []);
 
+  async function loadPacks() {
+    setPacksLoading(true);
+    try {
+      const packs = await api.getPacks();
+      setUnlockedPacks(packs.filter((p) => p.unlocked));
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setPacksLoading(false);
+    }
+  }
+
   useEffect(() => {
     (async () => {
       await ensureAuthenticated();
@@ -138,6 +173,8 @@ export default function GamePage() {
         // не критично для запуска игры
       }
 
+      await loadPacks();
+
       socketRef.current = connectGameSocket(coupleId, handleMessage, setStatus);
     })();
 
@@ -147,30 +184,40 @@ export default function GamePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function startRound() {
+  function proposePack(pack: PackOut) {
     setError(null);
-    socketRef.current?.send({ action: "start_round" });
+    socketRef.current?.send({ action: "propose_round", pack_id: pack.id });
+    // Оптимистично переходим в состояние "ждём ответа" — сервер подтвердит через round_proposed
+    setGame({ phase: "invite_sent", packId: pack.id, packName: pack.name });
+  }
+
+  function respondToInvite(accept: boolean) {
+    if (game.phase !== "invite_received") return;
+    socketRef.current?.send({ action: "respond_round_proposal", pack_id: game.packId, accept });
+    if (!accept) {
+      setGame({ phase: "idle" });
+    }
   }
 
   function submitTextAnswer(text: string) {
-    if (round.phase !== "in_progress") return;
-    socketRef.current?.send({ action: "submit_answer", round_id: round.roundId, text });
+    if (game.phase !== "in_progress") return;
+    socketRef.current?.send({ action: "submit_answer", round_id: game.roundId, text });
   }
 
   function submitOptionAnswer(optionId: number, text: string) {
-    if (round.phase !== "in_progress") return;
-    socketRef.current?.send({ action: "submit_answer", round_id: round.roundId, text, option_id: optionId });
+    if (game.phase !== "in_progress") return;
+    socketRef.current?.send({ action: "submit_answer", round_id: game.roundId, text, option_id: optionId });
   }
 
   function submitValidation(isMatch: boolean) {
-    if (round.phase !== "in_progress") return;
-    socketRef.current?.send({ action: "validate_answer", round_id: round.roundId, is_match: isMatch });
+    if (game.phase !== "in_progress") return;
+    socketRef.current?.send({ action: "validate_answer", round_id: game.roundId, is_match: isMatch });
   }
 
   async function handleRate(stars: number) {
-    if (round.phase !== "result") return;
+    if (game.phase !== "result") return;
     try {
-      await api.rateQuestion({ question_id: round.question.id, round_id: round.roundId, stars });
+      await api.rateQuestion({ question_id: game.question.id, round_id: game.roundId, stars });
       setRatingSubmitted(true);
     } catch (e: any) {
       setError(e.message);
@@ -178,18 +225,25 @@ export default function GamePage() {
   }
 
   async function handleReport() {
-    if (round.phase !== "result") return;
+    if (game.phase !== "result") return;
     try {
-      await api.rateQuestion({ question_id: round.question.id, round_id: round.roundId, is_report: true });
+      await api.rateQuestion({ question_id: game.question.id, round_id: game.roundId, is_report: true });
       setRatingSubmitted(true);
     } catch (e: any) {
       setError(e.message);
     }
   }
 
-  function handleNextRound() {
-    setRound({ phase: "idle" });
-    startRound();
+  async function handleNextRound() {
+    setGame({ phase: "idle" });
+    // Баланс мог измениться по итогам раунда (и если использовался пак с ценой) — обновим паки/монеты
+    try {
+      const me = await api.me();
+      setCoins(me.coins);
+    } catch {
+      // не критично
+    }
+    loadPacks();
   }
 
   async function handleLeaveCouple() {
@@ -232,18 +286,44 @@ export default function GamePage() {
 
       {error && <p className="text-center text-sm text-red-500">{error}</p>}
 
-      {round.phase === "idle" && (
-        <div className="card text-center space-y-3">
-          <p className="text-gray-500">Готовы узнать друг друга получше???</p>
-          <button className="btn-primary" onClick={startRound} disabled={status !== "open"}>
-            Начать раунд
-          </button>
+      {game.phase === "idle" && (
+        <PackPicker packs={unlockedPacks} loading={packsLoading} disabled={status !== "open"} onPick={proposePack} />
+      )}
+
+      {game.phase === "invite_sent" && (
+        <div className="card text-center space-y-2">
+          <p className="text-gray-500">
+            Предложили партнёру сыграть в пак <span className="font-semibold">«{game.packName}»</span>
+          </p>
+          <p className="text-sm text-gray-400">Ждём ответа...</p>
         </div>
       )}
 
-      {round.phase === "in_progress" && (
+      {game.phase === "invite_received" && (
+        <div className="card text-center space-y-3">
+          <p className="text-gray-500">
+            Партнёр предлагает сыграть в пак <span className="font-semibold">«{game.packName}»</span>
+          </p>
+          <div className="flex gap-3">
+            <button
+              className="flex-1 rounded-xl bg-green-500 text-white font-semibold py-3 hover:bg-green-600 transition"
+              onClick={() => respondToInvite(true)}
+            >
+              Принять
+            </button>
+            <button
+              className="flex-1 rounded-xl bg-gray-300 text-gray-700 font-semibold py-3 hover:bg-gray-400 transition"
+              onClick={() => respondToInvite(false)}
+            >
+              Отклонить
+            </button>
+          </div>
+        </div>
+      )}
+
+      {game.phase === "in_progress" && (
         <RoundView
-          round={round}
+          round={game}
           myUserId={myUserId}
           onSubmitText={submitTextAnswer}
           onSubmitOption={submitOptionAnswer}
@@ -251,15 +331,15 @@ export default function GamePage() {
         />
       )}
 
-      {round.phase === "result" && (
+      {game.phase === "result" && (
         <ResultModal
-          questionText={round.question.text}
-          answers={round.answers}
+          questionText={game.question.text}
+          answers={game.answers}
           myUserId={myUserId}
-          answererId={round.answererId}
-          isMatch={round.isMatch}
-          pointsAwarded={round.pointsAwarded}
-          coinsAwarded={round.coinsAwarded}
+          answererId={game.answererId}
+          isMatch={game.isMatch}
+          pointsAwarded={game.pointsAwarded}
+          coinsAwarded={game.coinsAwarded}
           onRate={handleRate}
           onReport={handleReport}
           ratingSubmitted={ratingSubmitted}
@@ -290,6 +370,52 @@ export default function GamePage() {
   );
 }
 
+function PackPicker({
+  packs,
+  loading,
+  disabled,
+  onPick,
+}: {
+  packs: PackOut[];
+  loading: boolean;
+  disabled: boolean;
+  onPick: (pack: PackOut) => void;
+}) {
+  if (loading) {
+    return <p className="text-center text-gray-400">Загрузка паков...</p>;
+  }
+
+  if (packs.length === 0) {
+    return (
+      <div className="card text-center space-y-2">
+        <p className="text-gray-500">У вашей пары пока нет доступных паков вопросов.</p>
+        <Link href="/packs" className="text-primary underline text-sm">
+          Открыть паки
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card space-y-3">
+      <p className="text-center text-gray-500">Выберите пак и предложите партнёру сыграть</p>
+      <div className="flex flex-col gap-2">
+        {packs.map((pack) => (
+          <button
+            key={pack.id}
+            disabled={disabled}
+            onClick={() => onPick(pack)}
+            className="w-full text-left rounded-xl border border-gray-300 px-4 py-3 transition hover:border-primary hover:bg-primary-light/30 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <span className="font-medium">{pack.name}</span>
+            <span className="block text-xs text-gray-400">{pack.question_count} вопросов</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function RoundView({
   round,
   myUserId,
@@ -297,7 +423,7 @@ function RoundView({
   onSubmitOption,
   onValidate,
 }: {
-  round: Extract<RoundState, { phase: "in_progress" }>;
+  round: Extract<GameState, { phase: "in_progress" }>;
   myUserId: string;
   onSubmitText: (text: string) => void;
   onSubmitOption: (optionId: number, text: string) => void;

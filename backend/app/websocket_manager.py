@@ -1,15 +1,19 @@
-from typing import Dict
+from typing import Dict, Optional
 from fastapi import WebSocket
 
 
 class ConnectionManager:
-    """Держит до двух активных WebSocket-соединений на комнату (couple_id).
+    """Держит до двух активных WebSocket-соединений на комнату (couple_id),
+    а также не более одного "ожидающего ответа" приглашения сыграть раунд
+    с конкретным паком (pending round request) на комнату.
 
     room[couple_id] = { user_id: WebSocket }
+    pending_requests[couple_id] = {"pack_id": int, "requested_by_id": str}
     """
 
     def __init__(self):
         self.rooms: Dict[str, Dict[str, WebSocket]] = {}
+        self.pending_requests: Dict[str, dict] = {}
 
     async def connect(self, couple_id: str, user_id: str, websocket: WebSocket) -> None:
         await websocket.accept()
@@ -33,6 +37,17 @@ class ConnectionManager:
         room = self.rooms.get(couple_id, {})
         for ws in list(room.values()):
             await ws.send_json(message)
+
+    # ---------- Ожидающие приглашения на раунд с выбранным паком ----------
+
+    def set_pending_request(self, couple_id: str, pack_id: int, requested_by_id: str) -> None:
+        self.pending_requests[couple_id] = {"pack_id": pack_id, "requested_by_id": requested_by_id}
+
+    def get_pending_request(self, couple_id: str) -> Optional[dict]:
+        return self.pending_requests.get(couple_id)
+
+    def clear_pending_request(self, couple_id: str) -> None:
+        self.pending_requests.pop(couple_id, None)
 
 
 manager = ConnectionManager()

@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 60 * 24 * 365
     database_url: str = "sqlite:///./couple_questions.db"
     cors_origins: str = "http://localhost:3000"
+    # Секретная фраза для получения прав администратора через POST /admin/claim.
+    # ОБЯЗАТЕЛЬНО смените в .env перед выкладкой на сервер.
+    admin_secret_key: str = "change_me_admin_secret"
 
     class Config:
         env_file = ".env"

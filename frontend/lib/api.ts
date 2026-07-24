@@ -1,5 +1,15 @@
 import { API_BASE_URL, ensureAuthenticated, getToken, saveSession, getUserId } from "./auth";
-import type { CoupleOut, QuestionOut, HistoryItemOut, AchievementOut, UserOut, PackOut } from "@/types";
+import type {
+  CoupleOut,
+  QuestionOut,
+  HistoryItemOut,
+  AchievementOut,
+  UserOut,
+  PackOut,
+  PackAdminOut,
+  PackAdminDetailOut,
+  PackUploadRequest,
+} from "@/types";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   await ensureAuthenticated();
@@ -91,6 +101,43 @@ export const api = {
     request<{ pack_id: number; remaining_coins: number }>(`/packs/${packId}/unlock`, {
       method: "POST",
     }),
+
+  submitPack: (payload: PackUploadRequest) =>
+    request<PackAdminOut>("/packs/submit", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  // ---------- Admin ----------
+
+  claimAdmin: (secret: string) =>
+    request<UserOut>("/admin/claim", {
+      method: "POST",
+      body: JSON.stringify({ secret }),
+    }),
+
+  adminListPacks: (status?: string) =>
+    request<PackAdminOut[]>(`/admin/packs${status ? `?status=${status}` : ""}`),
+
+  adminGetPack: (packId: number) => request<PackAdminDetailOut>(`/admin/packs/${packId}`),
+
+  adminUploadPack: (payload: PackUploadRequest) =>
+    request<PackAdminOut>("/admin/packs/upload", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  adminApprovePack: (packId: number) =>
+    request<PackAdminOut>(`/admin/packs/${packId}/approve`, { method: "POST" }),
+
+  adminRejectPack: (packId: number, reason?: string) =>
+    request<PackAdminOut>(`/admin/packs/${packId}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason: reason || null }),
+    }),
+
+  adminDeactivatePack: (packId: number) =>
+    request<{ status: string }>(`/admin/packs/${packId}`, { method: "DELETE" }),
 };
 
 export { getUserId };

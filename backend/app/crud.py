@@ -87,13 +87,24 @@ def leave_couple(db: Session, user: models.User) -> None:
 # ---------- Question packs ----------
 
 def get_unlocked_pack_ids(db: Session, couple_id: str) -> List[int]:
+    """Только паки, которые прошли модерацию (status == approved) и не скрыты
+    администратором (is_active == True) — либо бесплатные по умолчанию, либо
+    явно открытые этой парой за монеты."""
+    approved_active = (
+        models.QuestionPack.status == models.PackStatus.approved,
+        models.QuestionPack.is_active.is_(True),
+    )
     default_ids = [
-        row[0] for row in db.query(models.QuestionPack.id).filter(models.QuestionPack.is_default.is_(True)).all()
+        row[0]
+        for row in db.query(models.QuestionPack.id)
+        .filter(models.QuestionPack.is_default.is_(True), *approved_active)
+        .all()
     ]
     unlocked_ids = [
         row[0]
         for row in db.query(models.CouplePackUnlock.pack_id)
-        .filter(models.CouplePackUnlock.couple_id == couple_id)
+        .join(models.QuestionPack, models.QuestionPack.id == models.CouplePackUnlock.pack_id)
+        .filter(models.CouplePackUnlock.couple_id == couple_id, *approved_active)
         .all()
     ]
     return list(set(default_ids) | set(unlocked_ids))
@@ -106,6 +117,8 @@ def unlock_pack(db: Session, user: models.User, pack_id: int) -> models.CouplePa
     pack = db.query(models.QuestionPack).filter(models.QuestionPack.id == pack_id).first()
     if pack is None:
         raise ValueError("Пак не найден")
+    if pack.status != models.PackStatus.approved or not pack.is_active:
+        raise ValueError("Этот пак сейчас недоступен")
     if pack.is_default:
         raise ValueError("Этот пак уже доступен бесплатно")
 
@@ -131,9 +144,71 @@ def unlock_pack(db: Session, user: models.User, pack_id: int) -> models.CouplePa
     return unlock
 
 
+def validate_pack_payload(payload) -> None:
+    """Общая проверка структуры пака при загрузке админом или отправке
+    пользователем на модерацию. Бросает ValueError с понятным сообщением."""
+    if not payload.name or not payload.name.strip():
+        raise ValueError("Название пака не может быть пустым")
+    if payload.price_coins < 0:
+        raise ValueError("Цена пака не может быть отрицательной")
+    if not payload.questions:
+        raise ValueError("Пак должен содержать хотя бы один вопрос")
+
+    for q in payload.questions:
+        if not q.text or not q.text.strip():
+            raise ValueError("Текст вопроса не может быть пустым")
+        if q.question_type not in ("open", "choice"):
+            raise ValueError(f"Неизвестный тип вопроса: {q.question_type!r} (допустимо: open, choice)")
+        if q.question_type == "choice":
+            texts = [o.text.strip() for o in q.options if o.text and o.text.strip()]
+            if len(texts) < 2:
+                raise ValueError(f"Вопрос «{q.text}» типа choice должен содержать минимум 2 варианта ответа")
+            if len(set(texts)) != len(texts):
+                raise ValueError(f"Вопрос «{q.text}» содержит повторяющиеся варианты ответа")
+
+
+def create_pack_from_payload(
+    db: Session,
+    payload,
+    status: models.PackStatus,
+    created_by_id: Optional[str] = None,
+    is_default: bool = False,
+) -> models.QuestionPack:
+    pack = models.QuestionPack(
+        name=payload.name.strip(),
+        description=(payload.description or None),
+        price_coins=payload.price_coins,
+        is_default=is_default,
+        status=status,
+        created_by_id=created_by_id,
+    )
+    db.add(pack)
+    db.flush()  # получаем pack.id до commit
+
+    for q in payload.questions:
+        question = models.Question(
+            text=q.text.strip(),
+            category=(q.category or "general").strip() or "general",
+            question_type=models.QuestionType(q.question_type),
+            pack_id=pack.id,
+        )
+        db.add(question)
+        db.flush()
+        if q.question_type == "choice":
+            for i, opt in enumerate(q.options):
+                if opt.text and opt.text.strip():
+                    db.add(models.QuestionOption(question_id=question.id, text=opt.text.strip(), sort_order=i))
+
+    db.commit()
+    db.refresh(pack)
+    return pack
+
+
 # ---------- Questions ----------
 
-def pick_random_question(db: Session, couple_id: str) -> Optional[models.Question]:
+def pick_random_question(db: Session, couple_id: str, pack_id: Optional[int] = None) -> Optional[models.Question]:
+    """Если pack_id задан, вопрос выбирается только из этого пака (он должен
+    быть в числе открытых для пары); иначе — из любого открытого пака."""
     played_ids = [
         row[0]
         for row in db.query(models.CoupleQuestionHistory.question_id)
@@ -142,9 +217,16 @@ def pick_random_question(db: Session, couple_id: str) -> Optional[models.Questio
     ]
     unlocked_pack_ids = get_unlocked_pack_ids(db, couple_id)
 
+    if pack_id is not None:
+        if pack_id not in unlocked_pack_ids:
+            return None
+        pack_filter_ids = [pack_id]
+    else:
+        pack_filter_ids = unlocked_pack_ids
+
     query = db.query(models.Question).filter(
         models.Question.is_active.is_(True),
-        models.Question.pack_id.in_(unlocked_pack_ids) if unlocked_pack_ids else sa_false(),
+        models.Question.pack_id.in_(pack_filter_ids) if pack_filter_ids else sa_false(),
     )
     if played_ids:
         query = query.filter(~models.Question.id.in_(played_ids))

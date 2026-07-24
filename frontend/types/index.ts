@@ -67,6 +67,45 @@ export interface AchievementOut {
   earned_at?: string;
 }
 
+// ---------- Admin / pack moderation ----------
+
+export type PackStatus = "pending" | "approved" | "rejected";
+
+export interface PackAdminOut {
+  id: number;
+  name: string;
+  description: string | null;
+  price_coins: number;
+  is_default: boolean;
+  status: PackStatus;
+  is_active: boolean;
+  created_by_id: string | null;
+  rejection_reason: string | null;
+  question_count: number;
+}
+
+export interface PackAdminDetailOut extends PackAdminOut {
+  questions: QuestionOut[];
+}
+
+export interface PackQuestionOptionIn {
+  text: string;
+}
+
+export interface PackQuestionIn {
+  text: string;
+  category?: string;
+  question_type: QuestionType;
+  options?: PackQuestionOptionIn[];
+}
+
+export interface PackUploadRequest {
+  name: string;
+  description?: string;
+  price_coins?: number;
+  questions: PackQuestionIn[];
+}
+
 // ---------- WebSocket message shapes ----------
 
 export interface RoundQuestionPayload {
@@ -78,6 +117,8 @@ export interface RoundQuestionPayload {
 }
 
 export type WsServerMessage =
+  | { action: "round_proposed"; pack_id: number; pack_name: string; proposer_id: string }
+  | { action: "round_declined"; pack_id: number }
   | {
       action: "round_started";
       round_id: number;
@@ -107,6 +148,7 @@ export type WsServerMessage =
   | { action: "error"; detail: string };
 
 export type WsClientMessage =
-  | { action: "start_round" }
+  | { action: "propose_round"; pack_id: number }
+  | { action: "respond_round_proposal"; pack_id: number; accept: boolean }
   | { action: "submit_answer"; round_id: number; text: string; option_id?: number | null }
   | { action: "validate_answer"; round_id: number; is_match: boolean };

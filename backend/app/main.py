@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import Base, engine, get_db
-from app.routers import auth, couples, questions, game, packs
+from app.routers import auth, couples, questions, game, packs, admin
 from app.seed_data import run_all_seeds
 from app.auth import get_current_user
 from app.schemas import UserOut
@@ -26,6 +26,7 @@ app.include_router(couples.router)
 app.include_router(questions.router)
 app.include_router(game.router)
 app.include_router(packs.router)
+app.include_router(admin.router)
 
 
 @app.on_event("startup")

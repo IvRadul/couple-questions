@@ -68,6 +68,47 @@ class PackUnlockResponse(BaseModel):
     remaining_coins: int
 
 
+class PackQuestionOptionIn(BaseModel):
+    text: str
+
+
+class PackQuestionIn(BaseModel):
+    text: str
+    category: str = "general"
+    question_type: str = "open"  # "open" | "choice"
+    options: List[PackQuestionOptionIn] = []
+
+
+class PackUploadRequest(BaseModel):
+    """Форма JSON, которую принимают и админская загрузка пака,
+    и пользовательская отправка пака на модерацию."""
+
+    name: str
+    description: Optional[str] = None
+    price_coins: int = Field(default=0, ge=0)
+    questions: List[PackQuestionIn]
+
+
+class PackRejectRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class PackAdminOut(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    price_coins: int
+    is_default: bool
+    status: str
+    is_active: bool
+    created_by_id: Optional[str]
+    rejection_reason: Optional[str]
+    question_count: int
+
+    class Config:
+        from_attributes = True
+
+
 # ---------- Question ----------
 
 class QuestionOptionOut(BaseModel):
@@ -95,6 +136,16 @@ class QuestionAdminOut(QuestionOut):
     is_active: bool
     report_count: int
     pack_id: Optional[int]
+
+
+class PackAdminDetailOut(PackAdminOut):
+    """То же самое + сами вопросы — для предпросмотра на модерации."""
+
+    questions: List[QuestionOut] = []
+
+
+class AdminClaimRequest(BaseModel):
+    secret: str
 
 
 class QuestionOptionCreate(BaseModel):

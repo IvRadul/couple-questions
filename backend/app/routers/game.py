@@ -86,7 +86,10 @@ def my_achievements(
 # --------------------------------------------------------------------------
 # WebSocket: синхронизация раунда в реальном времени
 #
-# Роли на раунд назначаются случайно при старте:
+# Перед раундом один из партнёров выбирает пак вопросов и предлагает сыграть
+# именно в него — второй партнёр должен принять или отклонить предложение,
+# только после этого создаётся сам раунд. Роли внутри раунда назначаются
+# случайно:
 #   answerer — отвечает на вопрос "про себя" первым.
 #   guesser  — пытается угадать ответ партнёра, не видя его.
 #
@@ -97,11 +100,14 @@ def my_achievements(
 #
 # Протокол (JSON-сообщения):
 #   Клиент -> Сервер:
-#     {"action": "start_round"}
+#     {"action": "propose_round", "pack_id": 1}
+#     {"action": "respond_round_proposal", "pack_id": 1, "accept": true}
 #     {"action": "submit_answer", "round_id": 1, "text": "...", "option_id": null}
 #     {"action": "validate_answer", "round_id": 1, "is_match": true}
 #
 #   Сервер -> Клиент(ы):
+#     {"action": "round_proposed", "pack_id", "pack_name", "proposer_id"}  -> партнёру, которому предложили
+#     {"action": "round_declined", "pack_id"}                              -> инициатору, если партнёр отказался
 #     {"action": "round_started", "round_id", "question": {..., "question_type", "options"},
 #      "answerer_id", "guesser_id"}
 #     {"action": "answer_saved", "round_id"}                 -> отвечавшему, когда его ответ сохранён
@@ -112,6 +118,11 @@ def my_achievements(
 #      "points_awarded", "coins_awarded"}
 #     {"action": "new_achievement", "achievement": {...}}
 #     {"action": "error", "detail": "..."}
+#
+# Предложение раунда не хранится в БД (это лёгкий, недолговечный обмен) —
+# если партнёр в момент предложения не подключён к WebSocket, сообщение
+# теряется, как и с обычными уведомлениями хода; повторное предложение
+# решает эту ситуацию.
 # --------------------------------------------------------------------------
 
 def _question_payload(question: models.Question) -> dict:
@@ -208,8 +219,10 @@ async def websocket_endpoint(
                 message = await websocket.receive_json()
                 action = message.get("action")
 
-                if action == "start_round":
-                    await _handle_start_round(db, couple, user)
+                if action == "propose_round":
+                    await _handle_propose_round(db, couple, user, message)
+                elif action == "respond_round_proposal":
+                    await _handle_respond_round_proposal(db, couple, user, message)
                 elif action == "submit_answer":
                     await _handle_submit_answer(db, couple, user, message)
                 elif action == "validate_answer":
@@ -224,8 +237,8 @@ async def websocket_endpoint(
         db.close()
 
 
-async def _handle_start_round(db: Session, couple: models.Couple, requester: models.User) -> None:
-    # Не даём начать новый раунд, пока есть незавершённый
+async def _handle_propose_round(db: Session, couple: models.Couple, proposer: models.User, message: dict) -> None:
+    # Не даём предложить новый раунд, пока есть незавершённый
     active_round = (
         db.query(models.GameRound)
         .filter(
@@ -235,30 +248,89 @@ async def _handle_start_round(db: Session, couple: models.Couple, requester: mod
         .first()
     )
     if active_round is not None:
-        # Раунд уже идёт (скорее всего партнёр начал его первым, а этот клиент
+        # Раунд уже идёт (скорее всего партнёр начал его раньше, а этот клиент
         # пропустил рассылку) — вместо тупиковой ошибки досылаем ему текущее
         # состояние раунда, чтобы интерфейс синхронизировался.
-        for msg in _build_round_sync_messages(active_round, requester.id):
-            await manager.send_to_user(couple.id, requester.id, msg)
+        for msg in _build_round_sync_messages(active_round, proposer.id):
+            await manager.send_to_user(couple.id, proposer.id, msg)
+        return
+
+    pack_id = message.get("pack_id")
+    pack = db.query(models.QuestionPack).filter(models.QuestionPack.id == pack_id).first()
+    if pack is None:
+        await manager.send_to_user(couple.id, proposer.id, {"action": "error", "detail": "Пак не найден"})
+        return
+
+    unlocked_ids = crud.get_unlocked_pack_ids(db, couple.id)
+    if pack.id not in unlocked_ids:
+        await manager.send_to_user(
+            couple.id, proposer.id, {"action": "error", "detail": "Этот пак ещё не открыт для вашей пары"}
+        )
+        return
+
+    if crud.pick_random_question(db, couple.id, pack_id=pack.id) is None:
+        await manager.send_to_user(
+            couple.id,
+            proposer.id,
+            {"action": "error", "detail": "В этом паке не осталось новых вопросов для вашей пары"},
+        )
+        return
+
+    # Предложение — лёгкий, недолговечный обмен (не хранится в БД): если партнёр
+    # в этот момент не подключён к WebSocket, сообщение теряется так же, как и
+    # обычные уведомления о ходе — достаточно предложить ещё раз.
+    await manager.broadcast_to_couple(
+        couple.id,
+        {
+            "action": "round_proposed",
+            "pack_id": pack.id,
+            "pack_name": pack.name,
+            "proposer_id": proposer.id,
+        },
+    )
+
+
+async def _handle_respond_round_proposal(
+    db: Session, couple: models.Couple, responder: models.User, message: dict
+) -> None:
+    pack_id = message.get("pack_id")
+    accept = bool(message.get("accept"))
+
+    if not accept:
+        await manager.broadcast_to_couple(couple.id, {"action": "round_declined", "pack_id": pack_id})
+        return
+
+    # Не даём создать дубликат раунда, если он уже успел появиться
+    # (например, из-за повторного клика "Принять" в двух вкладках).
+    active_round = (
+        db.query(models.GameRound)
+        .filter(
+            models.GameRound.couple_id == couple.id,
+            models.GameRound.status != models.RoundStatus.completed,
+        )
+        .first()
+    )
+    if active_round is not None:
+        for msg in _build_round_sync_messages(active_round, responder.id):
+            await manager.send_to_user(couple.id, responder.id, msg)
         return
 
     members = db.query(models.User).filter(models.User.couple_id == couple.id).all()
     if len(members) != 2:
         await manager.send_to_user(
-            couple.id, requester.id, {"action": "error", "detail": "В паре должно быть двое участников"}
+            couple.id, responder.id, {"action": "error", "detail": "В паре должно быть двое участников"}
         )
         return
 
-    question = crud.pick_random_question(db, couple.id)
+    question = crud.pick_random_question(db, couple.id, pack_id=pack_id)
     if question is None:
-        await manager.send_to_user(
+        await manager.broadcast_to_couple(
             couple.id,
-            requester.id,
-            {"action": "error", "detail": "Вопросы закончились — откройте новый пак или подождите новых!"},
+            {"action": "error", "detail": "Вопросы в этом паке закончились, выберите другой пак"},
         )
         return
 
-    answerer, guesser = random.sample(members, 2, counts=None)
+    answerer, guesser = random.sample(members, 2)
 
     game_round = models.GameRound(
         couple_id=couple.id,

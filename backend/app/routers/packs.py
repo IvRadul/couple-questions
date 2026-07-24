@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.auth import get_current_user
 from app import models, crud
-from app.schemas import PackOut, PackUnlockResponse
+from app.schemas import PackOut, PackUnlockResponse, PackUploadRequest, PackAdminOut
 
 router = APIRouter(prefix="/packs", tags=["packs"])
 
@@ -15,7 +15,16 @@ def list_packs(
     user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    packs = db.query(models.QuestionPack).order_by(models.QuestionPack.sort_order).all()
+    """Только паки, прошедшие модерацию и не скрытые администратором."""
+    packs = (
+        db.query(models.QuestionPack)
+        .filter(
+            models.QuestionPack.status == models.PackStatus.approved,
+            models.QuestionPack.is_active.is_(True),
+        )
+        .order_by(models.QuestionPack.sort_order)
+        .all()
+    )
     unlocked_ids = set(crud.get_unlocked_pack_ids(db, user.couple_id)) if user.couple_id else set()
 
     result = []
@@ -52,3 +61,35 @@ def unlock_pack(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return PackUnlockResponse(pack_id=pack_id, remaining_coins=user.coins)
+
+
+@router.post("/submit", response_model=PackAdminOut)
+def submit_pack(
+    payload: PackUploadRequest,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Пользователь предлагает свой пак вопросов (JSON). Пак уходит на
+    модерацию (status=pending) и станет доступен для игры только после
+    того, как администратор его одобрит через /admin/packs/{id}/approve."""
+    try:
+        crud.validate_pack_payload(payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    pack = crud.create_pack_from_payload(
+        db, payload, status=models.PackStatus.pending, created_by_id=user.id
+    )
+    question_count = db.query(models.Question).filter(models.Question.pack_id == pack.id).count()
+    return PackAdminOut(
+        id=pack.id,
+        name=pack.name,
+        description=pack.description,
+        price_coins=pack.price_coins,
+        is_default=pack.is_default,
+        status=pack.status.value,
+        is_active=pack.is_active,
+        created_by_id=pack.created_by_id,
+        rejection_reason=pack.rejection_reason,
+        question_count=question_count,
+    )

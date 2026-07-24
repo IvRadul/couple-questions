@@ -81,9 +81,17 @@ class QuestionType(str, enum.Enum):
     choice = "choice"  # Тип 2: выбор из готовых вариантов, совпадение считается автоматически
 
 
+class PackStatus(str, enum.Enum):
+    pending = "pending"    # предложен пользователем, ждёт модерации
+    approved = "approved"  # прошёл проверку (или создан админом) — доступен для игры
+    rejected = "rejected"  # отклонён администратором
+
+
 class QuestionPack(Base):
     """Набор (пак) вопросов на одну тему. Стартовый пак бесплатный,
-    остальные открываются за монеты (за пару, не за отдельного пользователя)."""
+    остальные открываются за монеты (за пару, не за отдельного пользователя).
+    Паки может создавать администратор (сразу approved) или обычный
+    пользователь (уходит на модерацию со статусом pending)."""
 
     __tablename__ = "question_packs"
 
@@ -93,6 +101,11 @@ class QuestionPack(Base):
     price_coins = Column(Integer, default=0, nullable=False)
     is_default = Column(Boolean, default=False, nullable=False)
     sort_order = Column(Integer, default=0, nullable=False)
+
+    status = Column(Enum(PackStatus), default=PackStatus.approved, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)  # для мягкого скрытия админом
+    created_by_id = Column(String, ForeignKey("users.id"), nullable=True)
+    rejection_reason = Column(String(256), nullable=True)
 
     questions = relationship("Question", back_populates="pack")
     unlocks = relationship("CouplePackUnlock", back_populates="pack")

@@ -5,12 +5,33 @@ import Link from "next/link";
 import { api } from "@/lib/api";
 import type { PackOut } from "@/types";
 
+const EXAMPLE_JSON = `{
+  "name": "Название пака",
+  "description": "Необязательное описание",
+  "price_coins": 20,
+  "questions": [
+    { "text": "Вопрос со свободным ответом", "category": "быт", "question_type": "open" },
+    {
+      "text": "Вопрос с вариантами ответа",
+      "category": "развлечения",
+      "question_type": "choice",
+      "options": [{ "text": "Вариант 1" }, { "text": "Вариант 2" }]
+    }
+  ]
+}`;
+
 export default function PacksPage() {
   const [packs, setPacks] = useState<PackOut[]>([]);
   const [coins, setCoins] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyPackId, setBusyPackId] = useState<number | null>(null);
+
+  const [showSubmitForm, setShowSubmitForm] = useState(false);
+  const [submitJson, setSubmitJson] = useState("");
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -39,6 +60,31 @@ export default function PacksPage() {
       setError(e.message);
     } finally {
       setBusyPackId(null);
+    }
+  }
+
+  async function handleSubmitPack(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitError(null);
+    setSubmitSuccess(null);
+
+    let payload;
+    try {
+      payload = JSON.parse(submitJson);
+    } catch {
+      setSubmitError("Некорректный JSON — проверьте синтаксис");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await api.submitPack(payload);
+      setSubmitSuccess("Пак отправлен на модерацию. Он появится в списке, как только администратор его одобрит.");
+      setSubmitJson("");
+    } catch (e: any) {
+      setSubmitError(e.message);
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -83,6 +129,46 @@ export default function PacksPage() {
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="card space-y-3">
+        <button
+          className="text-sm text-primary underline"
+          onClick={() => setShowSubmitForm((v) => !v)}
+        >
+          {showSubmitForm ? "Скрыть форму" : "Предложить свой пак вопросов"}
+        </button>
+
+        {showSubmitForm && (
+          <>
+            <p className="text-xs text-gray-500">
+              Пак уйдёт на модерацию и появится в общем списке только после одобрения администратором.
+            </p>
+            <details className="text-xs text-gray-500">
+              <summary className="cursor-pointer">Показать пример формата</summary>
+              <pre className="bg-gray-100 rounded-lg p-3 mt-2 overflow-x-auto whitespace-pre-wrap">{EXAMPLE_JSON}</pre>
+            </details>
+            <form onSubmit={handleSubmitPack} className="flex flex-col gap-3">
+              <textarea
+                className="input min-h-[140px] font-mono text-xs"
+                placeholder="Вставьте JSON пака сюда..."
+                value={submitJson}
+                onChange={(e) => setSubmitJson(e.target.value)}
+              />
+              <button type="submit" className="btn-primary" disabled={submitting || !submitJson.trim()}>
+                Отправить на модерацию
+              </button>
+            </form>
+            {submitError && <p className="text-red-500 text-sm">{submitError}</p>}
+            {submitSuccess && <p className="text-green-600 text-sm">{submitSuccess}</p>}
+          </>
+        )}
+      </div>
+
+      <div className="text-center">
+        <Link href="/admin" className="text-xs text-gray-400 underline hover:text-primary">
+          Админ-панель
+        </Link>
       </div>
     </div>
   );
