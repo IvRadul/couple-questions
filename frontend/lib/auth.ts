@@ -37,8 +37,9 @@ export function clearSession() {
 
 /**
  * Гарантирует, что у пользователя есть JWT. Если токена нет — регистрирует
- * нового анонимного пользователя через POST /auth/register.
- * Логина и пароля в приложении нет вообще.
+ * нового анонимного пользователя через POST /auth/register. Пользователь
+ * может позже закрепить аккаунт логином/паролем (см. /account) и в
+ * будущем войти в него через /login на любом устройстве.
  */
 export async function ensureAuthenticated(): Promise<string> {
   const existing = getToken();

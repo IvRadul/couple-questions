@@ -23,7 +23,11 @@ def gen_uuid() -> str:
 
 
 class User(Base):
-    """Анонимный пользователь. Создаётся автоматически при первом обращении.
+    """Пользователь. Создаётся автоматически (анонимно) при первом обращении.
+    Опционально может "закрепить" аккаунт логином/паролем (username +
+    password_hash) — тогда с него можно будет войти на другом устройстве
+    без потери прогресса. Пока username не задан, аккаунт остаётся чисто
+    анонимным и доступен только через токен, сохранённый в localStorage.
     Весь прогресс (монеты, достижения, статистика) хранится на пользователе,
     а не на паре — поэтому смена/расформирование пары не обнуляет прогресс."""
 
@@ -31,6 +35,8 @@ class User(Base):
 
     id = Column(String, primary_key=True, default=gen_uuid)
     display_name = Column(String, nullable=True)
+    username = Column(String(32), unique=True, nullable=True, index=True)
+    password_hash = Column(String, nullable=True)
     coins = Column(Integer, default=0, nullable=False)
     is_admin = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)

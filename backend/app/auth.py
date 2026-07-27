@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
+import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
@@ -11,6 +12,20 @@ from app.database import get_db
 from app import models
 
 bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def hash_password(password: str) -> str:
+    # bcrypt учитывает только первые 72 байта пароля — для обычных паролей
+    # это не проблема, длину проверяем ещё и на уровне схемы (см. schemas.py).
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+    except ValueError:
+        # Битый/несовместимый хэш в БД — считаем пароль неверным, а не 500-й ошибкой.
+        return False
 
 
 def create_access_token(user_id: str, couple_id: Optional[str] = None) -> str:

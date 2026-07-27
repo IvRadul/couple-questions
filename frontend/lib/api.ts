@@ -11,6 +11,24 @@ import type {
   PackUploadRequest,
 } from "@/types";
 
+async function publicRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      detail = body.detail || detail;
+    } catch {
+      // ignore
+    }
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   await ensureAuthenticated();
   const token = getToken();
@@ -41,6 +59,21 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export const api = {
   me: () => request<UserOut>("/users/me"),
+
+  login: async (username: string, password: string) => {
+    const data = await publicRequest<{ access_token: string; user_id: string; couple_id: string | null }>(
+      "/auth/login",
+      { method: "POST", body: JSON.stringify({ username, password }) }
+    );
+    saveSession(data.access_token, data.user_id, data.couple_id);
+    return data;
+  },
+
+  setPassword: (username: string, password: string) =>
+    request<UserOut>("/auth/set-password", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
 
   createCouple: async () => {
     const data = await request<{

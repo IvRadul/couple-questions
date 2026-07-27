@@ -1,0 +1,92 @@
+# Шаблон конфигурации nginx для продакшена (один домен, роутинг по путям:
+# / -> frontend, /api/ и /ws/ -> backend). Плейсхолдер __DOMAIN__
+# подставляется скриптом scripts/render-nginx-config.sh на основе
+# значения DOMAIN из корневого .env — см. DEPLOY.md. Итоговый файл
+# (app.conf, без .template) генерируется рядом и в git не коммитится.
+
+server {
+    listen 80;
+    server_name __DOMAIN__ www.__DOMAIN__;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name __DOMAIN__ www.__DOMAIN__;
+
+    ssl_certificate /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+
+    location / {
+        proxy_pass http://frontend:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    # Более специфичный location, чем /api/ ниже — nginx выбирает самый
+    # длинный совпадающий префикс, так что запросы вида /api/ws/... уходят
+    # именно сюда и получают заголовки апгрейда до WebSocket. Это нужно,
+    # если NEXT_PUBLIC_API_URL указывает на .../api (единая база для REST
+    # и WS) — см. lib/websocket.ts на фронтенде.
+    location /api/ws/ {
+        proxy_pass http://backend:8000/ws/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    location /api/ {
+        proxy_pass http://backend:8000/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    # Прямой /ws/ (без префикса /api) оставлен для совместимости, если
+    # NEXT_PUBLIC_API_URL когда-нибудь укажет на голый домен без /api.
+    location /ws/ {
+        proxy_pass http://backend:8000/ws/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    location /docs {
+        proxy_pass http://backend:8000/docs;
+        proxy_set_header Host $host;
+    }
+
+    location /openapi.json {
+        proxy_pass http://backend:8000/openapi.json;
+        proxy_set_header Host $host;
+    }
+}

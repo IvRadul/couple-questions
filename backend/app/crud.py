@@ -1,11 +1,13 @@
 import random
+import re
 import string
 from typing import Optional, List
 
-from sqlalchemy import false as sa_false
+from sqlalchemy import false as sa_false, func
 from sqlalchemy.orm import Session
 
 from app import models
+from app.auth import hash_password, verify_password
 
 
 # ---------- Users ----------
@@ -20,6 +22,44 @@ def create_user(db: Session) -> models.User:
 
 def get_user(db: Session, user_id: str) -> Optional[models.User]:
     return db.query(models.User).filter(models.User.id == user_id).first()
+
+
+USERNAME_RE = re.compile(r"^[a-zA-Z0-9_]{3,32}$")
+
+
+def _get_user_by_username(db: Session, username: str) -> Optional[models.User]:
+    return db.query(models.User).filter(func.lower(models.User.username) == username.lower()).first()
+
+
+def set_user_credentials(db: Session, user: models.User, username: str, password: str) -> models.User:
+    """Закрепляет логин/пароль за уже существующим (в т.ч. анонимным)
+    пользователем, чтобы он мог войти с другого устройства без потери
+    прогресса. Не создаёт нового пользователя и не трогает couple_id/монеты."""
+    username = username.strip()
+
+    if not USERNAME_RE.match(username):
+        raise ValueError("Логин: 3-32 символа, латиница/цифры/подчёркивание")
+    if len(password) < 6:
+        raise ValueError("Пароль должен быть не короче 6 символов")
+
+    existing = _get_user_by_username(db, username)
+    if existing is not None and existing.id != user.id:
+        raise ValueError("Этот логин уже занят")
+
+    user.username = username
+    user.password_hash = hash_password(password)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def authenticate_user(db: Session, username: str, password: str) -> Optional[models.User]:
+    user = _get_user_by_username(db, username.strip())
+    if user is None or user.password_hash is None:
+        return None
+    if not verify_password(password, user.password_hash):
+        return None
+    return user
 
 
 # ---------- Couples ----------

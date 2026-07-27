@@ -15,6 +15,7 @@ class TokenResponse(BaseModel):
 class UserOut(BaseModel):
     id: str
     display_name: Optional[str]
+    username: Optional[str] = None
     coins: int
     is_admin: bool
     couple_id: Optional[str]
@@ -23,6 +24,16 @@ class UserOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class SetPasswordRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=32)
+    password: str = Field(..., min_length=6, max_length=128)
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 # ---------- Couple ----------

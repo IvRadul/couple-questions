@@ -275,6 +275,9 @@ export default function GamePage() {
           <Link href="/history" className="text-primary underline">
             История
           </Link>
+          <Link href="/account" className="text-primary underline">
+            Аккаунт
+          </Link>
         </div>
       </header>
 

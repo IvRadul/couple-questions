@@ -1,6 +1,7 @@
 export interface UserOut {
   id: string;
   display_name: string | null;
+  username: string | null;
   coins: number;
   is_admin: boolean;
   couple_id: string | null;
