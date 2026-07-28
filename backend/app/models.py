@@ -223,6 +223,8 @@ class GameRound(Base):
     couple = relationship("Couple", back_populates="rounds")
     question = relationship("Question")
     answers = relationship("Answer", back_populates="round")
+    answerer = relationship("User", foreign_keys=[answerer_id])
+    guesser = relationship("User", foreign_keys=[guesser_id])
 
 
 class Answer(Base):

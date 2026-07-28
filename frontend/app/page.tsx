@@ -4,6 +4,18 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ensureAuthenticated, getCoupleId, getToken } from "@/lib/auth";
+import { api } from "@/lib/api";
+
+type Router = ReturnType<typeof useRouter>;
+
+async function redirectAfterAuth(router: Router) {
+  const me = await api.me();
+  if (!me.display_name) {
+    router.replace("/welcome");
+    return;
+  }
+  router.replace(getCoupleId() ? "/game" : "/couple");
+}
 
 export default function HomePage() {
   const router = useRouter();
@@ -23,7 +35,7 @@ export default function HomePage() {
       }
       try {
         await ensureAuthenticated();
-        router.replace(getCoupleId() ? "/game" : "/couple");
+        await redirectAfterAuth(router);
       } catch (e: any) {
         setError(e.message || "Не удалось подключиться к серверу");
       }
@@ -35,7 +47,7 @@ export default function HomePage() {
     setError(null);
     try {
       await ensureAuthenticated();
-      router.replace(getCoupleId() ? "/game" : "/couple");
+      await redirectAfterAuth(router);
     } catch (e: any) {
       setError(e.message || "Не удалось подключиться к серверу");
       setStarting(false);

@@ -125,6 +125,26 @@ docker compose -f docker-compose.prod.yml logs -f backend
 дело в путях `/api/ws/` в `nginx/conf.d/app.conf` (см. пояснение в
 шаблоне) или в несовпадении `NEXT_PUBLIC_API_URL` с реальным доменом.
 
+**Про CORS и www.** Канонический домен — без `www` (`DOMAIN` из `.env`).
+`www.DOMAIN` везде только 301-редиректит на него — специально, чтобы
+браузер никогда не грузил приложение с `www`, пока фронтенд обращается к
+API на голом домене (или наоборот): это два разных origin, и браузер
+блокирует такие запросы как cross-origin (CORS), даже если backend вообще
+не участвует в проблеме. Если после обновления `app.conf` ошибки CORS
+всё ещё есть:
+- убедитесь, что `nginx/conf.d/app.conf` перегенерирован
+  (`./scripts/render-nginx-config.sh`) и nginx перезапущен/перезагружен
+  (`docker compose -f docker-compose.prod.yml exec nginx nginx -s reload`);
+- проверьте в адресной строке браузера, что вы реально на `https://example.com`,
+  а не на `https://www.example.com` (жёстко обновите страницу — Ctrl+Shift+R
+  — старая версия могла закэшироваться);
+- убедитесь, что `NEXT_PUBLIC_API_URL` и `CORS_ORIGINS` (в `backend/.env`)
+  оба указывают на один и тот же канонический домен без `www`;
+- если правили `backend/.env` — простого сохранения файла недостаточно,
+  контейнер читает `.env` только при старте: перезапустите backend
+  (`docker compose -f docker-compose.prod.yml up -d backend`, пересборка не
+  нужна, т.к. `.env` не копируется в образ, а подключается через `env_file`).
+
 Зайдите на `https://example.com/admin` и получите права администратора
 вашим `ADMIN_SECRET_KEY`.
 
@@ -139,7 +159,13 @@ docker compose -f docker-compose.prod.yml logs -f backend
 ## 8. Резервное копирование данных
 
 По умолчанию все данные (пользователи, пары, паки, история) лежат в SQLite
-внутри volume `backend_data`. Бэкап одной командой:
+внутри volume `backend_data`. Команды ниже используют CLI-утилиту `sqlite3`
+внутри backend-контейнера (не путать со встроенным Python-модулем
+`sqlite3` — это разные вещи). Если вы разворачивались до того, как эта
+утилита попала в `backend/Dockerfile`, пересоберите образ один раз:
+`docker compose -f docker-compose.prod.yml up -d --build backend`.
+
+Бэкап одной командой:
 
 ```bash
 docker compose -f docker-compose.prod.yml exec backend \
@@ -164,8 +190,26 @@ docker compose -f docker-compose.prod.yml up -d --build
 volume `backend_data` и начать с чистой БД. Для реального продакшена стоит
 добавить Alembic — сейчас в проекте этого нет.
 
-**Пример: миграция на версию с логином/паролем** (добавляет `username` и
-`password_hash` в уже существующую таблицу `users`, без потери данных):
+Ниже — накопленные вручную миграции по версиям (применяйте по порядку, если
+апгрейдитесь с более старой версии; если БД уже актуальна — соответствующий
+`ALTER TABLE` просто упадёт с "duplicate column", это нормально, значит уже
+накатили).
+
+**Версия 3 → модерация паков** (добавляет `status`, `is_active`,
+`created_by_id`, `rejection_reason` в `question_packs`):
+
+```bash
+docker compose -f docker-compose.prod.yml exec backend \
+  sqlite3 /app/data/couple_questions.db <<'SQL'
+ALTER TABLE question_packs ADD COLUMN status VARCHAR NOT NULL DEFAULT 'approved';
+ALTER TABLE question_packs ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1;
+ALTER TABLE question_packs ADD COLUMN created_by_id VARCHAR;
+ALTER TABLE question_packs ADD COLUMN rejection_reason VARCHAR(256);
+SQL
+```
+
+**Версия 4 → логин/пароль** (добавляет `username` и `password_hash` в уже
+существующую таблицу `users`, без потери данных):
 
 ```bash
 docker compose -f docker-compose.prod.yml exec backend \
@@ -180,6 +224,11 @@ SQL
 nullable, так что у уже существующих пользователей `username` останется
 `NULL` (аккаунт остаётся анонимным, как и был) — ничего не сломается, пока
 они сами не зайдут на `/account` и не зададут логин.
+
+**Версия 5 → обязательное имя.** Миграция не нужна — `display_name` был
+nullable-колонкой в `users` с самого начала, просто раньше никогда не
+заполнялся. Существующие пользователи при следующем визите просто попадут
+на `/welcome` и укажут имя один раз.
 
 ## 10. Важное ограничение: один экземпляр backend
 

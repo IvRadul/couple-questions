@@ -10,9 +10,9 @@ const EXAMPLE_JSON = `{
   "description": "Необязательное описание",
   "price_coins": 20,
   "questions": [
-    { "text": "Вопрос со свободным ответом", "category": "быт", "question_type": "open" },
+    { "text": "Что {username} больше всего ценит в людях?", "category": "быт", "question_type": "open" },
     {
-      "text": "Вопрос с вариантами ответа",
+      "text": "Какой формат отдыха выберет {username} в первую очередь?",
       "category": "развлечения",
       "question_type": "choice",
       "options": [{ "text": "Вариант 1" }, { "text": "Вариант 2" }]
@@ -143,6 +143,9 @@ export default function PacksPage() {
           <>
             <p className="text-xs text-gray-500">
               Пак уйдёт на модерацию и появится в общем списке только после одобрения администратором.
+              В тексте вопроса можно использовать <code className="bg-gray-100 px-1 rounded">{"{username}"}</code> —
+              он заменится именем того, кто отвечает на вопрос "про себя" (ставьте его в начале, в роли
+              подлежащего — «{"{username}"} любит...», без склонения по падежам).
             </p>
             <details className="text-xs text-gray-500">
               <summary className="cursor-pointer">Показать пример формата</summary>

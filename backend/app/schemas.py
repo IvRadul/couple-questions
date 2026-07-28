@@ -36,6 +36,10 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class SetDisplayNameRequest(BaseModel):
+    display_name: str = Field(..., min_length=1, max_length=32)
+
+
 # ---------- Couple ----------
 
 class CoupleCreateResponse(BaseModel):

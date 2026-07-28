@@ -24,6 +24,33 @@ def get_user(db: Session, user_id: str) -> Optional[models.User]:
     return db.query(models.User).filter(models.User.id == user_id).first()
 
 
+DISPLAY_NAME_MAX_LENGTH = 32
+
+
+def set_display_name(db: Session, user: models.User, display_name: str) -> models.User:
+    """Устанавливает отображаемое имя пользователя. В отличие от username
+    (логина для входа), это имя не уникально и не требует пароля — оно
+    обязательно для игры и подставляется в текст вопросов вместо
+    статичного "партнёр" (см. render_question_text)."""
+    display_name = display_name.strip()
+    if not display_name:
+        raise ValueError("Имя не может быть пустым")
+    if len(display_name) > DISPLAY_NAME_MAX_LENGTH:
+        raise ValueError(f"Имя не длиннее {DISPLAY_NAME_MAX_LENGTH} символов")
+
+    user.display_name = display_name
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def render_question_text(text: str, display_name: Optional[str]) -> str:
+    """Подставляет имя в шаблон вопроса вида '...{username}...'.
+    Если по какой-то причине имя не задано (не должно происходить, раз имя
+    обязательно), подставляется нейтральное "партнёр"."""
+    return text.replace("{username}", display_name or "партнёр")
+
+
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9_]{3,32}$")
 
 

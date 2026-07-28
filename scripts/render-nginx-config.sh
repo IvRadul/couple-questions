@@ -18,12 +18,17 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
-# shellcheck disable=SC1090
-set -a
-source "$ENV_FILE"
-set +a
+# Читаем DOMAIN как обычный текст (grep/cut), а не через `source .env` —
+# так одна кривая кавычка или спецсимвол в комментарии в другом месте файла
+# не сломает разбор всего файла как bash-скрипта.
+get_env_value() {
+  local key="$1"
+  grep -E "^${key}=" "$ENV_FILE" | tail -n1 | cut -d'=' -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'\$//"
+}
 
-if [ -z "${DOMAIN:-}" ]; then
+DOMAIN="$(get_env_value DOMAIN)"
+
+if [ -z "$DOMAIN" ]; then
   echo "В .env должен быть задан DOMAIN" >&2
   exit 1
 fi

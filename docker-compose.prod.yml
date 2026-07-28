@@ -35,7 +35,7 @@ services:
       context: ./frontend
       args:
         # Обязательно должен быть задан в .env как полный https-адрес с /api,
-        # например https://weddinginkrd.ru/api — это значение "запекается"
+        # например https://example.com/api — это значение "запекается"
         # в JS-бандл на этапе сборки, поменять на лету нельзя.
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?Укажите NEXT_PUBLIC_API_URL в .env, например https://your-domain.example/api}
     depends_on:

@@ -12,6 +12,11 @@ export default function AccountPage() {
   const [me, setMe] = useState<UserOut | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const [displayName, setDisplayName] = useState("");
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [nameSuccess, setNameSuccess] = useState<string | null>(null);
+  const [nameBusy, setNameBusy] = useState(false);
+
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -25,6 +30,7 @@ export default function AccountPage() {
         const data = await api.me();
         setMe(data);
         setUsername(data.username || "");
+        setDisplayName(data.display_name || "");
       } catch (e: any) {
         setError(e.message);
       } finally {
@@ -32,6 +38,22 @@ export default function AccountPage() {
       }
     })();
   }, []);
+
+  async function handleSaveName(e: React.FormEvent) {
+    e.preventDefault();
+    setNameBusy(true);
+    setNameError(null);
+    setNameSuccess(null);
+    try {
+      const updated = await api.setDisplayName(displayName.trim());
+      setMe(updated);
+      setNameSuccess("Имя сохранено.");
+    } catch (e: any) {
+      setNameError(e.message);
+    } finally {
+      setNameBusy(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -75,6 +97,28 @@ export default function AccountPage() {
         <Link href="/game" className="text-primary underline text-sm">
           Назад к игре
         </Link>
+      </div>
+
+      <div className="card space-y-3">
+        <p className="font-semibold">Ваше имя</p>
+        <p className="text-sm text-gray-500">
+          Показывается партнёру и подставляется в вопросы вида «Что {displayName.trim() || "..."} ценит в
+          людях больше всего?».
+        </p>
+        <form onSubmit={handleSaveName} className="flex flex-col gap-3">
+          <input
+            className="input"
+            placeholder="Ваше имя"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            maxLength={32}
+          />
+          <button type="submit" className="btn-primary" disabled={nameBusy || !displayName.trim()}>
+            Сохранить имя
+          </button>
+        </form>
+        {nameError && <p className="text-red-500 text-sm">{nameError}</p>}
+        {nameSuccess && <p className="text-green-600 text-sm">{nameSuccess}</p>}
       </div>
 
       <div className="card space-y-3">

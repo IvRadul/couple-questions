@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -7,7 +7,8 @@ from app.database import Base, engine, get_db
 from app.routers import auth, couples, questions, game, packs, admin
 from app.seed_data import run_all_seeds
 from app.auth import get_current_user
-from app.schemas import UserOut
+from app import crud, models
+from app.schemas import UserOut, SetDisplayNameRequest
 
 Base.metadata.create_all(bind=engine)
 
@@ -44,3 +45,19 @@ def health_check():
 @app.get("/users/me", response_model=UserOut)
 def get_me(user=Depends(get_current_user)):
     return user
+
+
+@app.post("/users/me/display-name", response_model=UserOut)
+def set_display_name(
+    payload: SetDisplayNameRequest,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Обязательное отображаемое имя — без него нельзя ни создать/присоединиться
+    к паре, ни играть (фронтенд запрашивает его сразу после первого визита).
+    Подставляется в тексты вопросов вида '...{username}...'."""
+    try:
+        updated = crud.set_display_name(db, user, payload.display_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return updated

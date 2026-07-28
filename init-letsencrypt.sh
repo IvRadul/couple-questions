@@ -22,11 +22,18 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-set -a
-source .env
-set +a
+# Читаем значения как обычный текст (grep/cut), а не через `source .env` —
+# так одна кривая кавычка или спецсимвол в комментарии в другом месте файла
+# не сломает разбор всего файла как bash-скрипта (см. DEPLOY.md).
+get_env_value() {
+  local key="$1"
+  grep -E "^${key}=" .env | tail -n1 | cut -d'=' -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'\$//"
+}
 
-if [ -z "${DOMAIN:-}" ] || [ -z "${LETSENCRYPT_EMAIL:-}" ]; then
+DOMAIN="$(get_env_value DOMAIN)"
+LETSENCRYPT_EMAIL="$(get_env_value LETSENCRYPT_EMAIL)"
+
+if [ -z "$DOMAIN" ] || [ -z "$LETSENCRYPT_EMAIL" ]; then
   echo "В .env должны быть заданы DOMAIN и LETSENCRYPT_EMAIL" >&2
   exit 1
 fi

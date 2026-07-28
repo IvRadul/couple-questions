@@ -1,0 +1,4 @@
+# Секреты и сгенерированные при деплое файлы — не коммитим
+.env
+.env.production
+nginx/conf.d/app.conf

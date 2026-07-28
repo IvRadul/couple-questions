@@ -125,10 +125,10 @@ def my_achievements(
 # решает эту ситуацию.
 # --------------------------------------------------------------------------
 
-def _question_payload(question: models.Question) -> dict:
+def _question_payload(question: models.Question, answerer_display_name: Optional[str]) -> dict:
     return {
         "id": question.id,
-        "text": question.text,
+        "text": crud.render_question_text(question.text, answerer_display_name),
         "category": question.category,
         "question_type": question.question_type.value,
         "options": [{"id": o.id, "text": o.text} for o in question.options],
@@ -144,7 +144,7 @@ def _build_round_sync_messages(game_round: models.GameRound, target_user_id: str
         {
             "action": "round_started",
             "round_id": game_round.id,
-            "question": _question_payload(game_round.question),
+            "question": _question_payload(game_round.question, game_round.answerer.display_name),
             "answerer_id": game_round.answerer_id,
             "guesser_id": game_round.guesser_id,
         }
@@ -255,6 +255,17 @@ async def _handle_propose_round(db: Session, couple: models.Couple, proposer: mo
             await manager.send_to_user(couple.id, proposer.id, msg)
         return
 
+    members = db.query(models.User).filter(models.User.couple_id == couple.id).all()
+    if any(not m.display_name for m in members):
+        # Имя обязательно (подставляется в текст вопросов вместо "партнёр") —
+        # фронтенд не должен пускать сюда без него, но подстрахуемся и здесь.
+        await manager.send_to_user(
+            couple.id,
+            proposer.id,
+            {"action": "error", "detail": "Оба участника пары должны указать имя, прежде чем начать игру"},
+        )
+        return
+
     pack_id = message.get("pack_id")
     pack = db.query(models.QuestionPack).filter(models.QuestionPack.id == pack_id).first()
     if pack is None:
@@ -346,7 +357,7 @@ async def _handle_respond_round_proposal(
     payload = {
         "action": "round_started",
         "round_id": game_round.id,
-        "question": _question_payload(question),
+        "question": _question_payload(question, answerer.display_name),
         "answerer_id": answerer.id,
         "guesser_id": guesser.id,
     }
@@ -547,7 +558,7 @@ async def _finalize_round(
     result_payload = {
         "action": "round_result",
         "round_id": game_round.id,
-        "question": _question_payload(question),
+        "question": _question_payload(question, answerer.display_name),
         "answers": [
             {"user_id": answerer.id, "text": answerer_answer.text, "selected_option_id": answerer_answer.selected_option_id},
             {"user_id": guesser.id, "text": guess_answer.text, "selected_option_id": guess_answer.selected_option_id},

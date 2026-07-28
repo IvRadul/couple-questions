@@ -16,6 +16,11 @@ export default function CouplePage() {
   useEffect(() => {
     (async () => {
       await ensureAuthenticated();
+      const me = await api.me();
+      if (!me.display_name) {
+        router.replace("/welcome");
+        return;
+      }
       if (getCoupleId()) {
         router.replace("/game");
         return;

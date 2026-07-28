@@ -75,6 +75,12 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
 
+  setDisplayName: (display_name: string) =>
+    request<UserOut>("/users/me/display-name", {
+      method: "POST",
+      body: JSON.stringify({ display_name }),
+    }),
+
   createCouple: async () => {
     const data = await request<{
       couple_id: string;

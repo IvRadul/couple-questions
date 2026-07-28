@@ -11,12 +11,12 @@ const EXAMPLE_JSON = `{
   "price_coins": 30,
   "questions": [
     {
-      "text": "Вопрос со свободным ответом",
+      "text": "Что {username} больше всего ценит в людях?",
       "category": "быт",
       "question_type": "open"
     },
     {
-      "text": "Вопрос с вариантами ответа",
+      "text": "Какой формат отдыха выберет {username} в первую очередь?",
       "category": "развлечения",
       "question_type": "choice",
       "options": [
@@ -213,6 +213,12 @@ function AdminDashboard() {
 
       <div className="card space-y-3">
         <p className="font-semibold">Загрузить новый пак (JSON)</p>
+        <p className="text-xs text-gray-500">
+          В тексте вопроса можно использовать <code className="bg-gray-100 px-1 rounded">{"{username}"}</code> —
+          при показе он заменяется именем того, кто отвечает на вопрос "про себя". Ставьте его только в
+          позиции подлежащего («{"{username}"} любит...», «Что {"{username}"} ценит...») — имя вставляется
+          как есть, без склонения по падежам.
+        </p>
         <details className="text-xs text-gray-500">
           <summary className="cursor-pointer">Показать пример формата</summary>
           <pre className="bg-gray-100 rounded-lg p-3 mt-2 overflow-x-auto whitespace-pre-wrap">{EXAMPLE_JSON}</pre>

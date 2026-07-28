@@ -168,9 +168,13 @@ export default function GamePage() {
 
       try {
         const me = await api.me();
+        if (!me.display_name) {
+          router.replace("/welcome");
+          return;
+        }
         setCoins(me.coins);
       } catch {
-        // не критично для запуска игры
+        // не критично для запуска игры — просто не покажем баланс монет
       }
 
       await loadPacks();
