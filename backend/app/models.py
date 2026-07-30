@@ -194,27 +194,59 @@ class CoupleQuestionHistory(Base):
 
 
 class RoundStatus(str, enum.Enum):
-    waiting_answer = "waiting_answer"          # ждём ответа того, кто отвечает "за себя"
-    waiting_guess = "waiting_guess"            # отвечавший ответил, ждём догадку второго партнёра
+    in_progress = "in_progress"                # оба могут отвечать сразу и независимо друг от друга
     waiting_validation = "waiting_validation"  # только для типа 'open': ждём ручную проверку отвечавшего
     completed = "completed"
 
 
+class SessionStatus(str, enum.Enum):
+    in_progress = "in_progress"
+    completed = "completed"
+
+
+class GameSession(Base):
+    """Игровая сессия — несколько раундов подряд по одному паку за один
+    заход (по умолчанию до QUESTIONS_PER_PLAYER вопросов на каждого
+    игрока — см. routers/game.py). Роль "отвечающего" строго чередуется
+    между раундами сессии, начиная с first_answerer. Итоги (очки/монеты/
+    совпадения) считаются по всем раундам сессии и показываются одним
+    списком в конце, вместо разового результата после каждого вопроса."""
+
+    __tablename__ = "game_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    couple_id = Column(String, ForeignKey("couples.id"), nullable=False)
+    pack_id = Column(Integer, ForeignKey("question_packs.id"), nullable=False)
+    total_rounds = Column(Integer, nullable=False)
+    first_answerer_id = Column(String, ForeignKey("users.id"), nullable=False)
+    status = Column(Enum(SessionStatus), default=SessionStatus.in_progress, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+    couple = relationship("Couple")
+    pack = relationship("QuestionPack")
+    rounds = relationship("GameRound", back_populates="session", order_by="GameRound.sequence_number")
+
+
 class GameRound(Base):
-    """Один раунд игры. Роли на раунд назначаются случайно:
-    answerer — отвечает на вопрос "про себя" первым;
-    guesser — пытается угадать, что ответил партнёр, не видя его ответа."""
+    """Один раунд игры (один вопрос) в рамках игровой сессии (GameSession).
+    Роли на раунд: answerer — отвечает на вопрос "про себя"; guesser —
+    пытается угадать ответ партнёра, не видя его. Оба отвечают одновременно
+    и независимо — guesser в любом случае не видит ответ answerer'а, пока
+    сам не ответит, поэтому ждать друг друга не нужно."""
 
     __tablename__ = "game_rounds"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     couple_id = Column(String, ForeignKey("couples.id"), nullable=False)
     question_id = Column(Integer, ForeignKey("questions.id"), nullable=False)
+    session_id = Column(Integer, ForeignKey("game_sessions.id"), nullable=True)
+    sequence_number = Column(Integer, nullable=True)  # 1-based позиция раунда внутри сессии
 
     answerer_id = Column(String, ForeignKey("users.id"), nullable=False)
     guesser_id = Column(String, ForeignKey("users.id"), nullable=False)
 
-    status = Column(Enum(RoundStatus), default=RoundStatus.waiting_answer, nullable=False)
+    status = Column(Enum(RoundStatus), default=RoundStatus.in_progress, nullable=False)
     is_match = Column(Boolean, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -222,6 +254,7 @@ class GameRound(Base):
 
     couple = relationship("Couple", back_populates="rounds")
     question = relationship("Question")
+    session = relationship("GameSession", back_populates="rounds")
     answers = relationship("Answer", back_populates="round")
     answerer = relationship("User", foreign_keys=[answerer_id])
     guesser = relationship("User", foreign_keys=[guesser_id])

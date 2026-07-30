@@ -2,10 +2,9 @@ interface Props {
   text: string;
   category: string;
   questionType: "open" | "choice";
-  roleLabel?: string;
 }
 
-export default function QuestionCard({ text, category, questionType, roleLabel }: Props) {
+export default function QuestionCard({ text, category, questionType }: Props) {
   return (
     <div className="card text-center">
       <div className="flex items-center justify-center gap-2 mb-2">
@@ -16,7 +15,6 @@ export default function QuestionCard({ text, category, questionType, roleLabel }
           {questionType === "choice" ? "с вариантами" : "свободный ответ"}
         </span>
       </div>
-      {roleLabel && <p className="text-sm text-gray-400 mb-1">{roleLabel}</p>}
       <p className="text-xl font-medium leading-snug">{text}</p>
     </div>
   );

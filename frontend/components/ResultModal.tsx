@@ -1,7 +1,7 @@
 "use client";
 
 import RatingStars from "./RatingStars";
-import type { AnswerOut } from "@/types";
+import type { AnswerOut, SessionProgress } from "@/types";
 
 interface Props {
   questionText: string;
@@ -11,6 +11,8 @@ interface Props {
   isMatch: boolean;
   pointsAwarded: number;
   coinsAwarded: number;
+  sessionProgress?: SessionProgress | null;
+  isLastInSession: boolean;
   onRate: (stars: number) => void;
   onReport: () => void;
   ratingSubmitted: boolean;
@@ -25,6 +27,8 @@ export default function ResultModal({
   isMatch,
   pointsAwarded,
   coinsAwarded,
+  sessionProgress,
+  isLastInSession,
   onRate,
   onReport,
   ratingSubmitted,
@@ -37,6 +41,11 @@ export default function ResultModal({
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
       <div className="card max-w-md w-full">
+        {sessionProgress && (
+          <p className="text-center text-xs text-gray-400 mb-2">
+            Вопрос {sessionProgress.sequence_number} из {sessionProgress.total_rounds}
+          </p>
+        )}
         <h2 className={`text-2xl font-bold text-center mb-1 ${isMatch ? "text-green-600" : "text-gray-500"}`}>
           {isMatch ? "Совпадение! 🎉" : "Не совпало"}
         </h2>
@@ -78,7 +87,7 @@ export default function ResultModal({
         )}
 
         <button className="btn-primary w-full mt-4" onClick={onNextRound}>
-          Следующий вопрос
+          {isLastInSession ? "Посмотреть итоги" : "Следующий вопрос"}
         </button>
       </div>
     </div>

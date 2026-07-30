@@ -273,15 +273,43 @@ def create_pack_from_payload(
 
 # ---------- Questions ----------
 
-def pick_random_question(db: Session, couple_id: str, pack_id: Optional[int] = None) -> Optional[models.Question]:
-    """Если pack_id задан, вопрос выбирается только из этого пака (он должен
-    быть в числе открытых для пары); иначе — из любого открытого пака."""
+def count_available_questions(db: Session, couple_id: str, pack_id: int) -> int:
+    """Сколько ещё непройденных парой вопросов осталось в этом паке —
+    используется, чтобы решить, сколько раундов уместится в сессию."""
     played_ids = [
         row[0]
         for row in db.query(models.CoupleQuestionHistory.question_id)
         .filter(models.CoupleQuestionHistory.couple_id == couple_id)
         .all()
     ]
+    query = db.query(models.Question).filter(
+        models.Question.is_active.is_(True),
+        models.Question.pack_id == pack_id,
+    )
+    if played_ids:
+        query = query.filter(~models.Question.id.in_(played_ids))
+    return query.count()
+
+
+def pick_random_question(
+    db: Session,
+    couple_id: str,
+    pack_id: Optional[int] = None,
+    exclude_ids: Optional[List[int]] = None,
+) -> Optional[models.Question]:
+    """Если pack_id задан, вопрос выбирается только из этого пака (он должен
+    быть в числе открытых для пары); иначе — из любого открытого пака.
+    exclude_ids — дополнительно исключаемые id (например, уже выпавшие в
+    текущей игровой сессии, ещё не попавшие в CoupleQuestionHistory)."""
+    played_ids = [
+        row[0]
+        for row in db.query(models.CoupleQuestionHistory.question_id)
+        .filter(models.CoupleQuestionHistory.couple_id == couple_id)
+        .all()
+    ]
+    if exclude_ids:
+        played_ids = list(set(played_ids) | set(exclude_ids))
+
     unlocked_pack_ids = get_unlocked_pack_ids(db, couple_id)
 
     if pack_id is not None:

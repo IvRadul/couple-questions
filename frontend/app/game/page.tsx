@@ -11,9 +11,11 @@ import AnswerInput from "@/components/AnswerInput";
 import ResultModal from "@/components/ResultModal";
 import AchievementToast from "@/components/AchievementToast";
 import ValidationPanel from "@/components/ValidationPanel";
-import type { WsServerMessage, AnswerOut, RoundQuestionPayload, PackOut } from "@/types";
+import RoleBanner from "@/components/RoleBanner";
+import SessionSummary from "@/components/SessionSummary";
+import type { WsServerMessage, AnswerOut, RoundQuestionPayload, PackOut, SessionProgress } from "@/types";
 
-type RoundStatus = "waiting_answer" | "waiting_guess" | "waiting_validation";
+type RoundStatus = "in_progress" | "waiting_validation";
 
 type GameState =
   | { phase: "idle" }
@@ -26,7 +28,10 @@ type GameState =
       answererId: string;
       guesserId: string;
       status: RoundStatus;
+      mySubmitted: boolean;
+      partnerAnswered: boolean;
       validation?: { yourAnswer: string; guess: string };
+      sessionProgress: SessionProgress | null;
     }
   | {
       phase: "result";
@@ -38,6 +43,14 @@ type GameState =
       isMatch: boolean;
       pointsAwarded: number;
       coinsAwarded: number;
+      sessionProgress: SessionProgress | null;
+    }
+  | {
+      phase: "session_summary";
+      totalRounds: number;
+      matches: number;
+      totalPoints: number;
+      totalCoins: number;
     };
 
 interface AchievementPopup {
@@ -45,6 +58,13 @@ interface AchievementPopup {
   title: string;
   description: string;
   coin_reward: number;
+}
+
+interface PendingSessionSummary {
+  totalRounds: number;
+  matches: number;
+  totalPoints: number;
+  totalCoins: number;
 }
 
 export default function GamePage() {
@@ -61,6 +81,8 @@ export default function GamePage() {
   const [leaving, setLeaving] = useState(false);
   const [unlockedPacks, setUnlockedPacks] = useState<PackOut[]>([]);
   const [packsLoading, setPacksLoading] = useState(true);
+  const [pendingSummary, setPendingSummary] = useState<PendingSessionSummary | null>(null);
+  const [advancing, setAdvancing] = useState(false);
 
   const handleMessage = useCallback((msg: WsServerMessage) => {
     switch (msg.action) {
@@ -85,22 +107,27 @@ export default function GamePage() {
       }
       case "round_started": {
         setRatingSubmitted(false);
+        setPendingSummary(null);
+        setAdvancing(false);
         setGame({
           phase: "in_progress",
           roundId: msg.round_id,
           question: msg.question,
           answererId: msg.answerer_id,
           guesserId: msg.guesser_id,
-          status: "waiting_answer",
+          status: "in_progress",
+          mySubmitted: false,
+          partnerAnswered: false,
+          sessionProgress: msg.session_progress,
         });
         break;
       }
       case "answer_saved": {
-        setGame((prev) => (prev.phase === "in_progress" ? { ...prev, status: "waiting_guess" } : prev));
+        setGame((prev) => (prev.phase === "in_progress" ? { ...prev, mySubmitted: true } : prev));
         break;
       }
-      case "your_turn": {
-        setGame((prev) => (prev.phase === "in_progress" ? { ...prev, status: "waiting_guess" } : prev));
+      case "partner_answered": {
+        setGame((prev) => (prev.phase === "in_progress" ? { ...prev, partnerAnswered: true } : prev));
         break;
       }
       case "awaiting_validation": {
@@ -120,6 +147,7 @@ export default function GamePage() {
         break;
       }
       case "round_result": {
+        setAdvancing(false);
         setGame({
           phase: "result",
           roundId: msg.round_id,
@@ -130,6 +158,19 @@ export default function GamePage() {
           isMatch: msg.is_match,
           pointsAwarded: msg.points_awarded,
           coinsAwarded: msg.coins_awarded,
+          sessionProgress: msg.session_progress,
+        });
+        break;
+      }
+      case "session_completed": {
+        // Приходит сразу после round_result для последнего раунда сессии.
+        // Не переключаем фазу сразу — даём посмотреть результат последнего
+        // вопроса и оценить его, итог покажем по кнопке "Посмотреть итоги".
+        setPendingSummary({
+          totalRounds: msg.total_rounds,
+          matches: msg.matches,
+          totalPoints: msg.total_points,
+          totalCoins: msg.total_coins,
         });
         break;
       }
@@ -138,6 +179,7 @@ export default function GamePage() {
         break;
       }
       case "error": {
+        setAdvancing(false);
         setError(msg.detail);
         break;
       }
@@ -238,9 +280,18 @@ export default function GamePage() {
     }
   }
 
-  async function handleNextRound() {
+  function handleNextRound() {
+    if (pendingSummary) {
+      setGame({ phase: "session_summary", ...pendingSummary });
+      setPendingSummary(null);
+      return;
+    }
+    setAdvancing(true);
+    socketRef.current?.send({ action: "next_round" });
+  }
+
+  async function handleSessionDone() {
     setGame({ phase: "idle" });
-    // Баланс мог измениться по итогам раунда (и если использовался пак с ценой) — обновим паки/монеты
     try {
       const me = await api.me();
       setCoins(me.coins);
@@ -339,18 +390,35 @@ export default function GamePage() {
       )}
 
       {game.phase === "result" && (
-        <ResultModal
-          questionText={game.question.text}
-          answers={game.answers}
-          myUserId={myUserId}
-          answererId={game.answererId}
-          isMatch={game.isMatch}
-          pointsAwarded={game.pointsAwarded}
-          coinsAwarded={game.coinsAwarded}
-          onRate={handleRate}
-          onReport={handleReport}
-          ratingSubmitted={ratingSubmitted}
-          onNextRound={handleNextRound}
+        <>
+          {advancing && (
+            <p className="text-center text-sm text-gray-400">Загружаем следующий вопрос...</p>
+          )}
+          <ResultModal
+            questionText={game.question.text}
+            answers={game.answers}
+            myUserId={myUserId}
+            answererId={game.answererId}
+            isMatch={game.isMatch}
+            pointsAwarded={game.pointsAwarded}
+            coinsAwarded={game.coinsAwarded}
+            sessionProgress={game.sessionProgress}
+            isLastInSession={pendingSummary !== null}
+            onRate={handleRate}
+            onReport={handleReport}
+            ratingSubmitted={ratingSubmitted}
+            onNextRound={handleNextRound}
+          />
+        </>
+      )}
+
+      {game.phase === "session_summary" && (
+        <SessionSummary
+          totalRounds={game.totalRounds}
+          matches={game.matches}
+          totalPoints={game.totalPoints}
+          totalCoins={game.totalCoins}
+          onDone={handleSessionDone}
         />
       )}
 
@@ -437,49 +505,47 @@ function RoundView({
   onValidate: (isMatch: boolean) => void;
 }) {
   const iAmAnswerer = myUserId === round.answererId;
-  const roleLabel = iAmAnswerer
-    ? "Вы отвечаете на вопрос за себя"
-    : "Вы пытаетесь угадать ответ партнёра";
 
   return (
     <div className="space-y-4">
+      {round.sessionProgress && (
+        <p className="text-center text-xs text-gray-400">
+          Вопрос {round.sessionProgress.sequence_number} из {round.sessionProgress.total_rounds}
+        </p>
+      )}
+
+      <RoleBanner role={iAmAnswerer ? "answerer" : "guesser"} />
+
       <QuestionCard
         text={round.question.text}
         category={round.question.category}
         questionType={round.question.question_type}
-        roleLabel={roleLabel}
       />
 
-      {round.status === "waiting_answer" && iAmAnswerer && (
-        <AnswerInput
-          questionType={round.question.question_type}
-          options={round.question.options}
-          disabled={false}
-          onSubmitText={onSubmitText}
-          onSubmitOption={onSubmitOption}
-          placeholder="Как бы вы сами ответили на этот вопрос?"
-        />
+      {round.status === "in_progress" && !round.mySubmitted && (
+        <>
+          {round.partnerAnswered && (
+            <p className="text-center text-sm text-primary">
+              Партнёр уже ответил — не заставляйте ждать 😄
+            </p>
+          )}
+          <AnswerInput
+            questionType={round.question.question_type}
+            options={round.question.options}
+            disabled={false}
+            onSubmitText={onSubmitText}
+            onSubmitOption={onSubmitOption}
+            placeholder={
+              iAmAnswerer
+                ? "Как бы вы сами ответили на этот вопрос?"
+                : "Как вы думаете, что ответит партнёр?"
+            }
+          />
+        </>
       )}
 
-      {round.status === "waiting_answer" && !iAmAnswerer && (
-        <p className="text-center text-gray-500">Партнёр сейчас отвечает на вопрос про себя...</p>
-      )}
-
-      {round.status === "waiting_guess" && !iAmAnswerer && (
-        <AnswerInput
-          questionType={round.question.question_type}
-          options={round.question.options}
-          disabled={false}
-          onSubmitText={onSubmitText}
-          onSubmitOption={onSubmitOption}
-          placeholder="Как вы думаете, что ответил партнёр?"
-        />
-      )}
-
-      {round.status === "waiting_guess" && iAmAnswerer && (
-        <p className="text-center text-gray-500">
-          Ваш ответ сохранён. Партнёр сейчас пытается угадать его...
-        </p>
+      {round.status === "in_progress" && round.mySubmitted && (
+        <p className="text-center text-gray-500">Ответ отправлен ✓ Ждём партнёра...</p>
       )}
 
       {round.status === "waiting_validation" && iAmAnswerer && round.validation && (

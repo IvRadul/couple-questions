@@ -117,6 +117,11 @@ export interface RoundQuestionPayload {
   options: QuestionOptionOut[];
 }
 
+export interface SessionProgress {
+  sequence_number: number;
+  total_rounds: number;
+}
+
 export type WsServerMessage =
   | { action: "round_proposed"; pack_id: number; pack_name: string; proposer_id: string }
   | { action: "round_declined"; pack_id: number }
@@ -126,9 +131,10 @@ export type WsServerMessage =
       question: RoundQuestionPayload;
       answerer_id: string;
       guesser_id: string;
+      session_progress: SessionProgress | null;
     }
   | { action: "answer_saved"; round_id: number }
-  | { action: "your_turn"; round_id: number }
+  | { action: "partner_answered"; round_id: number }
   | { action: "awaiting_validation"; round_id: number }
   | { action: "validate_request"; round_id: number; your_answer: string; guess: string }
   | {
@@ -141,6 +147,15 @@ export type WsServerMessage =
       is_match: boolean;
       points_awarded: number;
       coins_awarded: number;
+      session_progress: SessionProgress | null;
+    }
+  | {
+      action: "session_completed";
+      session_id: number;
+      total_rounds: number;
+      matches: number;
+      total_points: number;
+      total_coins: number;
     }
   | {
       action: "new_achievement";
@@ -152,4 +167,5 @@ export type WsClientMessage =
   | { action: "propose_round"; pack_id: number }
   | { action: "respond_round_proposal"; pack_id: number; accept: boolean }
   | { action: "submit_answer"; round_id: number; text: string; option_id?: number | null }
-  | { action: "validate_answer"; round_id: number; is_match: boolean };
+  | { action: "validate_answer"; round_id: number; is_match: boolean }
+  | { action: "next_round" };

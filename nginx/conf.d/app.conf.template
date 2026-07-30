@@ -49,8 +49,20 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
 
+    # Встроенный DNS докера — без него nginx резолвит имена backend/frontend
+    # ОДИН РАЗ при старте и кэширует IP на весь срок жизни воркера. После
+    # `docker compose up -d --build` контейнеры backend/frontend получают
+    # новые IP, а nginx (если его не перезапустить) продолжает стучаться в
+    # старые — соединение рвётся на уровне TCP/TLS ещё до HTTP-ответа,
+    # в браузере это выглядит как NS_ERROR_NET_* / "не удаётся установить
+    # соединение". Чтобы этого не происходило при каждом деплое, используем
+    # переменные в proxy_pass — тогда nginx резолвит имя заново на каждый
+    # запрос (через resolver), а не один раз при старте.
+    resolver 127.0.0.11 valid=10s;
+
     location / {
-        proxy_pass http://frontend:3000;
+        set $frontend_upstream frontend:3000;
+        proxy_pass http://$frontend_upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
@@ -66,7 +78,8 @@ server {
     # если NEXT_PUBLIC_API_URL указывает на .../api (единая база для REST
     # и WS) — см. lib/websocket.ts на фронтенде.
     location /api/ws/ {
-        proxy_pass http://backend:8000/ws/;
+        set $backend_upstream backend:8000;
+        proxy_pass http://$backend_upstream/ws/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -79,7 +92,8 @@ server {
     }
 
     location /api/ {
-        proxy_pass http://backend:8000/;
+        set $backend_upstream backend:8000;
+        proxy_pass http://$backend_upstream/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -90,7 +104,8 @@ server {
     # Прямой /ws/ (без префикса /api) оставлен для совместимости, если
     # NEXT_PUBLIC_API_URL когда-нибудь укажет на голый домен без /api.
     location /ws/ {
-        proxy_pass http://backend:8000/ws/;
+        set $backend_upstream backend:8000;
+        proxy_pass http://$backend_upstream/ws/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -103,12 +118,14 @@ server {
     }
 
     location /docs {
-        proxy_pass http://backend:8000/docs;
+        set $backend_upstream backend:8000;
+        proxy_pass http://$backend_upstream/docs;
         proxy_set_header Host $host;
     }
 
     location /openapi.json {
-        proxy_pass http://backend:8000/openapi.json;
+        set $backend_upstream backend:8000;
+        proxy_pass http://$backend_upstream/openapi.json;
         proxy_set_header Host $host;
     }
 }
