@@ -1,17 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ensureAuthenticated, getCoupleId } from "@/lib/auth";
 import { api } from "@/lib/api";
+import QRCodeImage from "@/components/QRCodeImage";
 
-export default function CouplePage() {
+function CouplePageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [joinCode, setJoinCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [autoJoining, setAutoJoining] = useState(false);
+  const [origin, setOrigin] = useState("");
+
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -25,8 +33,28 @@ export default function CouplePage() {
         router.replace("/game");
         return;
       }
+
+      // Открыли по ссылке-приглашению (?code=123456, например из QR) —
+      // пробуем присоединиться сразу, без ручного ввода кода.
+      const codeFromLink = searchParams.get("code")?.replace(/\D/g, "").slice(0, 6) || "";
+      if (codeFromLink.length === 6) {
+        setJoinCode(codeFromLink);
+        setAutoJoining(true);
+        try {
+          await api.joinCouple(codeFromLink);
+          router.replace("/game");
+          return;
+        } catch (e: any) {
+          setError(e.message);
+          setAutoJoining(false);
+          // не получилось — просто останется предзаполненная форма ниже,
+          // можно поправить код руками и отправить ещё раз
+        }
+      }
+
       setLoading(false);
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   async function handleCreate() {
@@ -77,9 +105,15 @@ export default function CouplePage() {
     }
   }
 
+  if (autoJoining) {
+    return <p className="text-center text-gray-500">Присоединяемся к паре...</p>;
+  }
+
   if (loading) {
     return <p className="text-center text-gray-500">Загрузка...</p>;
   }
+
+  const joinLink = inviteCode && origin ? `${origin}/couple?code=${inviteCode}` : null;
 
   return (
     <div className="space-y-6">
@@ -89,9 +123,34 @@ export default function CouplePage() {
         <div className="card text-center space-y-3">
           <p className="text-gray-500">Отправьте этот код партнёру:</p>
           <p className="text-4xl font-bold tracking-widest text-primary">{inviteCode}</p>
-          <p className="text-sm text-gray-400">
-            Ожидаем подключения второго участника... Как только партнёр введёт код, вы автоматически
-            перейдёте в игру.
+
+          {joinLink && (
+            <>
+              <div className="flex items-center gap-2 my-2">
+                <div className="flex-1 h-px bg-gray-200" />
+                <span className="text-xs text-gray-400">или</span>
+                <div className="flex-1 h-px bg-gray-200" />
+              </div>
+              <QRCodeImage value={joinLink} size={180} />
+              <p className="text-xs text-gray-400">
+                Партнёр может отсканировать QR камерой телефона — код подставится и подключение
+                произойдёт автоматически
+              </p>
+              <button
+                type="button"
+                className="text-xs text-primary underline"
+                onClick={() => {
+                  navigator.clipboard?.writeText(joinLink);
+                }}
+              >
+                Скопировать ссылку
+              </button>
+            </>
+          )}
+
+          <p className="text-sm text-gray-400 pt-2">
+            Ожидаем подключения второго участника... Как только партнёр введёт код (или перейдёт по
+            ссылке/QR), вы автоматически перейдёте в игру.
           </p>
         </div>
       ) : (
@@ -121,5 +180,13 @@ export default function CouplePage() {
 
       {error && <p className="text-red-500 text-center">{error}</p>}
     </div>
+  );
+}
+
+export default function CouplePage() {
+  return (
+    <Suspense fallback={<p className="text-center text-gray-500">Загрузка...</p>}>
+      <CouplePageContent />
+    </Suspense>
   );
 }
