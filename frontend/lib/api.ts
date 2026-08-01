@@ -1,7 +1,9 @@
 import { API_BASE_URL, ensureAuthenticated, getToken, saveSession, getUserId } from "./auth";
 import type {
   CoupleOut,
+  CoupleHistoryItemOut,
   QuestionOut,
+  QuestionAdminOut,
   HistoryItemOut,
   AchievementOut,
   UserOut,
@@ -117,6 +119,17 @@ export const api = {
 
   getMyCouple: () => request<CoupleOut>("/couples/me"),
 
+  getCoupleHistory: () => request<CoupleHistoryItemOut[]>("/couples/history"),
+
+  reconnectCouple: async (coupleId: string) => {
+    const data = await request<{ access_token: string; user_id: string; couple_id: string }>(
+      `/couples/${coupleId}/reconnect`,
+      { method: "POST" }
+    );
+    saveSession(data.access_token, data.user_id, data.couple_id);
+    return data;
+  },
+
   getHistory: () => request<HistoryItemOut[]>("/game/history"),
 
   getMyAchievements: () => request<AchievementOut[]>("/achievements/me"),
@@ -157,6 +170,11 @@ export const api = {
 
   adminListPacks: (status?: string) =>
     request<PackAdminOut[]>(`/admin/packs${status ? `?status=${status}` : ""}`),
+
+  adminListQuestions: () => request<QuestionAdminOut[]>("/questions/admin/all"),
+
+  adminDeactivateQuestion: (questionId: number) =>
+    request<{ status: string }>(`/questions/admin/${questionId}`, { method: "DELETE" }),
 
   adminGetPack: (packId: number) => request<PackAdminDetailOut>(`/admin/packs/${packId}`),
 

@@ -99,6 +99,25 @@ def _generate_invite_code(db: Session) -> str:
             return code
 
 
+def _open_membership(db: Session, couple_id: str, user_id: str) -> None:
+    db.add(models.CoupleMembership(couple_id=couple_id, user_id=user_id))
+
+
+def _close_open_membership(db: Session, couple_id: str, user_id: str) -> None:
+    membership = (
+        db.query(models.CoupleMembership)
+        .filter(
+            models.CoupleMembership.couple_id == couple_id,
+            models.CoupleMembership.user_id == user_id,
+            models.CoupleMembership.left_at.is_(None),
+        )
+        .order_by(models.CoupleMembership.id.desc())
+        .first()
+    )
+    if membership is not None:
+        membership.left_at = datetime.utcnow()
+
+
 def create_couple(db: Session, creator: models.User) -> models.Couple:
     couple = models.Couple(invite_code=_generate_invite_code(db), status=models.CoupleStatus.pending)
     db.add(couple)
@@ -106,6 +125,7 @@ def create_couple(db: Session, creator: models.User) -> models.Couple:
     db.refresh(couple)
 
     creator.couple_id = couple.id
+    _open_membership(db, couple.id, creator.id)
     db.commit()
     return couple
 
@@ -125,6 +145,7 @@ def join_couple(db: Session, user: models.User, invite_code: str) -> models.Coup
 
     user.couple_id = couple.id
     couple.status = models.CoupleStatus.active
+    _open_membership(db, couple.id, user.id)
     db.commit()
     db.refresh(couple)
     return couple
@@ -134,7 +155,8 @@ def leave_couple(db: Session, user: models.User) -> None:
     """Расформировывает текущую пару пользователя. Прогресс (монеты,
     достижения, статистика) остаётся на пользователях — расформировывается
     только связь между ними, история старой пары (раунды, пройденные
-    вопросы, открытые паки) в БД сохраняется как есть."""
+    вопросы, открытые паки, членство) в БД сохраняется как есть и доступна
+    через get_couple_history/reconnect_couple."""
     if not user.couple_id:
         raise ValueError("Вы не состоите в паре")
 
@@ -146,9 +168,86 @@ def leave_couple(db: Session, user: models.User) -> None:
 
     members = db.query(models.User).filter(models.User.couple_id == couple.id).all()
     for member in members:
+        _close_open_membership(db, couple.id, member.id)
         member.couple_id = None
     couple.status = models.CoupleStatus.disbanded
     db.commit()
+
+
+def get_couple_history(db: Session, user: models.User) -> List[dict]:
+    """Список пар, в которых пользователь когда-либо состоял, кроме текущей
+    активной (если есть). Для каждой — имя партнёра (последнего, кто был в
+    этой паре вместе с пользователем) и даты последнего периода членства."""
+    my_memberships = (
+        db.query(models.CoupleMembership)
+        .filter(models.CoupleMembership.user_id == user.id)
+        .order_by(models.CoupleMembership.joined_at.desc())
+        .all()
+    )
+
+    seen_couple_ids: set = set()
+    result: List[dict] = []
+    for m in my_memberships:
+        if m.couple_id == user.couple_id:
+            continue  # это текущая пара, не "прошлая"
+        if m.couple_id in seen_couple_ids:
+            continue  # уже добавили эту пару по более свежей записи о членстве
+        seen_couple_ids.add(m.couple_id)
+
+        partner_membership = (
+            db.query(models.CoupleMembership)
+            .filter(models.CoupleMembership.couple_id == m.couple_id, models.CoupleMembership.user_id != user.id)
+            .order_by(models.CoupleMembership.id.desc())
+            .first()
+        )
+        partner_name = partner_membership.user.display_name if partner_membership else None
+
+        result.append(
+            {
+                "couple_id": m.couple_id,
+                "partner_display_name": partner_name,
+                "status": m.couple.status.value,
+                "joined_at": m.joined_at,
+                "left_at": m.left_at,
+            }
+        )
+    return result
+
+
+def reconnect_couple(db: Session, user: models.User, couple_id: str) -> models.Couple:
+    """Переподключение к паре, в которой пользователь состоял раньше.
+    Работает симметрично обычному join: если партнёр ещё не переподключился
+    — пара остаётся в статусе pending, пока не переподключятся оба."""
+    if user.couple_id:
+        raise ValueError("Вы уже состоите в паре — сначала выйдите из неё")
+
+    was_member = (
+        db.query(models.CoupleMembership)
+        .filter(models.CoupleMembership.couple_id == couple_id, models.CoupleMembership.user_id == user.id)
+        .first()
+    )
+    if was_member is None:
+        raise ValueError("Вы никогда не состояли в этой паре")
+
+    couple = db.query(models.Couple).filter(models.Couple.id == couple_id).first()
+    if couple is None:
+        raise ValueError("Пара не найдена")
+    if couple.status == models.CoupleStatus.active:
+        raise ValueError("В этой паре уже два участника")
+
+    user.couple_id = couple.id
+    _open_membership(db, couple.id, user.id)
+
+    other_member_reconnected = (
+        db.query(models.User)
+        .filter(models.User.couple_id == couple.id, models.User.id != user.id)
+        .first()
+    )
+    couple.status = models.CoupleStatus.active if other_member_reconnected else models.CoupleStatus.pending
+
+    db.commit()
+    db.refresh(couple)
+    return couple
 
 
 # ---------- Question packs ----------

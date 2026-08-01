@@ -5,12 +5,13 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { clearSession, ensureAuthenticated } from "@/lib/auth";
-import type { UserOut } from "@/types";
+import type { UserOut, AchievementOut } from "@/types";
 
 export default function AccountPage() {
   const router = useRouter();
   const [me, setMe] = useState<UserOut | null>(null);
   const [loading, setLoading] = useState(true);
+  const [achievements, setAchievements] = useState<AchievementOut[]>([]);
 
   const [displayName, setDisplayName] = useState("");
   const [nameError, setNameError] = useState<string | null>(null);
@@ -35,6 +36,12 @@ export default function AccountPage() {
         setError(e.message);
       } finally {
         setLoading(false);
+      }
+      try {
+        const data = await api.getMyAchievements();
+        setAchievements(data);
+      } catch {
+        // не критично — просто не покажем список
       }
     })();
   }, []);
@@ -97,6 +104,40 @@ export default function AccountPage() {
         <Link href="/game" className="text-primary underline text-sm">
           Назад к игре
         </Link>
+      </div>
+
+      <div className="card flex justify-center gap-8 text-center">
+        <div>
+          <p className="text-xl font-bold text-yellow-500">🪙 {me?.coins ?? 0}</p>
+          <p className="text-xs text-gray-500">монет</p>
+        </div>
+        <div>
+          <p className="text-xl font-bold text-primary">{me?.total_games ?? 0}</p>
+          <p className="text-xs text-gray-500">раундов сыграно</p>
+        </div>
+        <div>
+          <p className="text-xl font-bold text-primary">{me?.best_match_streak ?? 0}</p>
+          <p className="text-xs text-gray-500">лучшая серия</p>
+        </div>
+      </div>
+
+      <div className="card space-y-3">
+        <p className="font-semibold">Достижения</p>
+        {achievements.length === 0 ? (
+          <p className="text-sm text-gray-400">Пока нет ни одного — играйте, чтобы получить первое!</p>
+        ) : (
+          <div className="space-y-2">
+            {achievements.map((ach) => (
+              <div key={ach.code} className="flex items-start gap-3 rounded-xl bg-primary-light/30 p-3">
+                <span className="text-2xl">🏆</span>
+                <div>
+                  <p className="font-medium">{ach.title}</p>
+                  <p className="text-xs text-gray-500">{ach.description}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="card space-y-3">

@@ -67,7 +67,10 @@ class Couple(Base):
     """Пара из двух пользователей, связанных по коду приглашения.
     Пользователь может со временем состоять в нескольких парах по очереди —
     старые пары остаются в базе как есть (со своей историей вопросов и
-    раундов), просто пользователь на них больше не ссылается."""
+    раундов), просто пользователь на них больше не ссылается. Полная
+    история членства (кто и когда состоял в этой паре) — в CoupleMembership,
+    она не удаляется при выходе, поэтому можно посмотреть список прошлых
+    пар и при желании переподключиться к одной из них."""
 
     __tablename__ = "couples"
 
@@ -80,6 +83,26 @@ class Couple(Base):
     history = relationship("CoupleQuestionHistory", back_populates="couple")
     rounds = relationship("GameRound", back_populates="couple")
     pack_unlocks = relationship("CouplePackUnlock", back_populates="couple")
+    memberships = relationship("CoupleMembership", back_populates="couple")
+
+
+class CoupleMembership(Base):
+    """Запись о членстве пользователя в паре — создаётся при
+    создании/присоединении/переподключении, закрывается (left_at) при
+    выходе. В отличие от User.couple_id (который отражает только ТЕКУЩУЮ
+    пару и обнуляется при выходе), это неизменяемая история — по ней
+    строится список "прошлых пар" пользователя."""
+
+    __tablename__ = "couple_memberships"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    couple_id = Column(String, ForeignKey("couples.id"), nullable=False)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    joined_at = Column(DateTime, default=datetime.utcnow)
+    left_at = Column(DateTime, nullable=True)  # NULL = членство сейчас активно
+
+    couple = relationship("Couple", back_populates="memberships")
+    user = relationship("User")
 
 
 class QuestionType(str, enum.Enum):

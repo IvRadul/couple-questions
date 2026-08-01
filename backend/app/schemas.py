@@ -63,6 +63,14 @@ class CoupleOut(BaseModel):
         from_attributes = True
 
 
+class CoupleHistoryItemOut(BaseModel):
+    couple_id: str
+    partner_display_name: Optional[str] = None
+    status: str
+    joined_at: datetime
+    left_at: Optional[datetime] = None
+
+
 # ---------- Question packs ----------
 
 class PackOut(BaseModel):

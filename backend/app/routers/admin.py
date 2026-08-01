@@ -6,6 +6,7 @@ from app.database import get_db
 from app.auth import get_current_user
 from app.config import settings
 from app import models, crud
+from app.rate_limit import rate_limit_admin_claim
 from app.schemas import (
     AdminClaimRequest,
     PackUploadRequest,
@@ -50,6 +51,7 @@ def claim_admin(
     payload: AdminClaimRequest,
     user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    _rl: None = Depends(rate_limit_admin_claim),
 ):
     """Выдаёт текущему (уже анонимно зарегистрированному) пользователю права
     администратора, если он знает секретный ключ из ADMIN_SECRET_KEY. Это

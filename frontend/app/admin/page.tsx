@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import type { PackAdminOut, PackStatus } from "@/types";
+import type { PackAdminOut, PackStatus, QuestionAdminOut } from "@/types";
 
 const EXAMPLE_JSON = `{
   "name": "Название пака",
@@ -111,6 +111,39 @@ function AdminDashboard() {
   const [uploading, setUploading] = useState(false);
 
   const [busyPackId, setBusyPackId] = useState<number | null>(null);
+
+  const [reportedQuestions, setReportedQuestions] = useState<QuestionAdminOut[]>([]);
+  const [reportsLoading, setReportsLoading] = useState(true);
+  const [busyQuestionId, setBusyQuestionId] = useState<number | null>(null);
+
+  async function loadReportedQuestions() {
+    setReportsLoading(true);
+    try {
+      const data = await api.adminListQuestions();
+      setReportedQuestions(data.filter((q) => q.report_count > 0 && q.is_active));
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setReportsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadReportedQuestions();
+  }, []);
+
+  async function handleDeactivateQuestion(questionId: number) {
+    if (!window.confirm("Скрыть этот вопрос из игры? Уже сыгранные раунды с ним не пострадают.")) return;
+    setBusyQuestionId(questionId);
+    try {
+      await api.adminDeactivateQuestion(questionId);
+      loadReportedQuestions();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusyQuestionId(null);
+    }
+  }
 
   async function loadPacks() {
     setLoading(true);
@@ -239,6 +272,36 @@ function AdminDashboard() {
 
         {uploadError && <p className="text-red-500 text-sm">{uploadError}</p>}
         {uploadSuccess && <p className="text-green-600 text-sm">{uploadSuccess}</p>}
+      </div>
+
+      <div className="space-y-3">
+        <p className="font-semibold">Жалобы на вопросы</p>
+
+        {reportsLoading && <p className="text-center text-gray-400">Загрузка...</p>}
+        {!reportsLoading && reportedQuestions.length === 0 && (
+          <p className="text-sm text-gray-400">Жалоб нет.</p>
+        )}
+
+        {reportedQuestions.map((q) => (
+          <div key={q.id} className="card space-y-2">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-medium">{q.text}</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  {q.category} · рейтинг {q.average_rating.toFixed(1)} ({q.rating_count}) ·{" "}
+                  <span className="text-red-500 font-semibold">жалоб: {q.report_count}</span>
+                </p>
+              </div>
+              <button
+                className="text-xs bg-red-100 text-red-600 rounded-lg px-3 py-1.5 hover:bg-red-200 disabled:opacity-50 whitespace-nowrap"
+                onClick={() => handleDeactivateQuestion(q.id)}
+                disabled={busyQuestionId === q.id}
+              >
+                Скрыть вопрос
+              </button>
+            </div>
+          </div>
+        ))}
       </div>
 
       <div className="space-y-3">

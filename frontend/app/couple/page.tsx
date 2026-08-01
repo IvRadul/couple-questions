@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { ensureAuthenticated, getCoupleId } from "@/lib/auth";
 import { api } from "@/lib/api";
 import QRCodeImage from "@/components/QRCodeImage";
@@ -176,6 +177,12 @@ function CouplePageContent() {
             Присоединиться
           </button>
         </form>
+      </div>
+
+      <div className="text-center">
+        <Link href="/couples" className="text-xs text-gray-400 underline hover:text-primary">
+          Прошлые пары
+        </Link>
       </div>
 
       {error && <p className="text-red-500 text-center">{error}</p>}

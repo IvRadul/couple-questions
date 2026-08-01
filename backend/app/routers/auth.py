@@ -5,6 +5,7 @@ from app.database import get_db
 from app import crud, models
 from app.auth import create_access_token, get_current_user
 from app.schemas import TokenResponse, SetPasswordRequest, LoginRequest, UserOut
+from app.rate_limit import rate_limit_login, rate_limit_set_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -34,6 +35,7 @@ def set_password(
     payload: SetPasswordRequest,
     user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    _rl: None = Depends(rate_limit_set_password),
 ):
     """Закрепляет логин/пароль за ТЕКУЩИМ (уже существующим, в т.ч. анонимным)
     аккаунтом — не создаёт новый и не трогает прогресс/пару. После этого
@@ -46,7 +48,7 @@ def set_password(
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, db: Session = Depends(get_db), _rl: None = Depends(rate_limit_login)):
     """Вход по логину/паролю в ранее закреплённый аккаунт (см. /auth/set-password).
     Выдаёт новый JWT для этого пользователя — прогресс, монеты, пара (если
     есть) подтягиваются автоматически."""

@@ -178,13 +178,18 @@ export default function GamePage() {
         setAchievementQueue((prev) => [...prev, msg.achievement]);
         break;
       }
+      case "couple_disbanded": {
+        socketRef.current?.close();
+        router.replace("/couple");
+        break;
+      }
       case "error": {
         setAdvancing(false);
         setError(msg.detail);
         break;
       }
     }
-  }, []);
+  }, [router]);
 
   async function loadPacks() {
     setPacksLoading(true);

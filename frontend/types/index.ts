@@ -26,11 +26,25 @@ export interface QuestionOut {
   rating_count: number;
 }
 
+export interface QuestionAdminOut extends QuestionOut {
+  is_active: boolean;
+  report_count: number;
+  pack_id: number | null;
+}
+
 export interface CoupleOut {
   id: string;
   invite_code: string;
   status: "pending" | "active" | "disbanded";
   members: UserOut[];
+}
+
+export interface CoupleHistoryItemOut {
+  couple_id: string;
+  partner_display_name: string | null;
+  status: "pending" | "active" | "disbanded";
+  joined_at: string;
+  left_at: string | null;
 }
 
 export interface PackOut {
@@ -161,6 +175,7 @@ export type WsServerMessage =
       action: "new_achievement";
       achievement: { code: string; title: string; description: string; coin_reward: number };
     }
+  | { action: "couple_disbanded" }
   | { action: "error"; detail: string };
 
 export type WsClientMessage =
