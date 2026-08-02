@@ -313,15 +313,29 @@ async def websocket_endpoint(
     couple_id: str,
     token: str = Query(...),
 ):
+    # Принимаем соединение сразу, независимо от исхода последующей валидации —
+    # так клиент (и nginx между ним и backend'ом) всегда видят корректный
+    # HTTP 101 хендшейк, а не обрыв соединения на середине апгрейда. Некоторые
+    # связки nginx+ASGI отдают такой обрыв клиенту как 502 Bad Gateway вместо
+    # понятной ошибки — closing до accept() формально валиден по ASGI, но
+    # на практике не везде проксируется чисто.
+    await websocket.accept()
+
     db = SessionLocal()
     try:
         user = decode_token_for_ws(token, db)
         if user is None or user.couple_id != couple_id:
+            await websocket.send_json(
+                {"action": "error", "detail": "Сессия недействительна — обновите страницу"}
+            )
             await websocket.close(code=4401)
             return
 
         couple = db.query(models.Couple).filter(models.Couple.id == couple_id).first()
         if couple is None or couple.status != models.CoupleStatus.active:
+            await websocket.send_json(
+                {"action": "error", "detail": "Эта пара сейчас недоступна — обновите страницу"}
+            )
             await websocket.close(code=4404)
             return
 

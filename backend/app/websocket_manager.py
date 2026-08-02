@@ -16,7 +16,11 @@ class ConnectionManager:
         self.pending_requests: Dict[str, dict] = {}
 
     async def connect(self, couple_id: str, user_id: str, websocket: WebSocket) -> None:
-        await websocket.accept()
+        # Приём (accept) уже сделан вызывающим кодом (websocket_endpoint) —
+        # это нужно, чтобы клиент/nginx всегда видели корректный HTTP 101
+        # хендшейк, даже если соединение потом сразу же закрывается из-за
+        # невалидного токена/пары (иначе некоторые связки nginx+ASGI отдают
+        # такой обрыв как 502, а не как понятную ошибку).
         self.rooms.setdefault(couple_id, {})
         self.rooms[couple_id][user_id] = websocket
 

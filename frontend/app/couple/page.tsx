@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ensureAuthenticated, getCoupleId } from "@/lib/auth";
+import { ensureAuthenticated, getToken, saveSession } from "@/lib/auth";
 import { api } from "@/lib/api";
 import QRCodeImage from "@/components/QRCodeImage";
 
@@ -25,12 +25,28 @@ function CouplePageContent() {
   useEffect(() => {
     (async () => {
       await ensureAuthenticated();
-      const me = await api.me();
+
+      let me;
+      try {
+        me = await api.me();
+      } catch (e: any) {
+        setError(e.message || "Не удалось подключиться к серверу");
+        setLoading(false);
+        return;
+      }
+
+      // Держим localStorage в согласии с сервером — на случай, если пара
+      // была расформирована партнёром, пока эта вкладка была неактивна.
+      const token = getToken();
+      if (token) {
+        saveSession(token, me.id, me.couple_id);
+      }
+
       if (!me.display_name) {
         router.replace("/welcome");
         return;
       }
-      if (getCoupleId()) {
+      if (me.couple_id) {
         router.replace("/game");
         return;
       }

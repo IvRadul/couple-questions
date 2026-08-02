@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import { getCoupleId } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -18,8 +17,8 @@ export default function LoginPage() {
     setBusy(true);
     setError(null);
     try {
-      await api.login(username.trim(), password);
-      router.replace(getCoupleId() ? "/game" : "/couple");
+      const data = await api.login(username.trim(), password);
+      router.replace(data.couple_id ? "/game" : "/couple");
     } catch (e: any) {
       setError(e.message);
     } finally {

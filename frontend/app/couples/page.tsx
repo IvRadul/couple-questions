@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ensureAuthenticated, getCoupleId } from "@/lib/auth";
+import { ensureAuthenticated } from "@/lib/auth";
 import { api } from "@/lib/api";
 import type { CoupleHistoryItemOut } from "@/types";
 
@@ -19,17 +19,19 @@ export default function CouplesHistoryPage() {
   useEffect(() => {
     (async () => {
       await ensureAuthenticated();
+
       try {
         const me = await api.me();
         if (!me.display_name) {
           router.replace("/welcome");
           return;
         }
-      } catch {
-        // не критично для показа списка
+        setHasCurrentCouple(!!me.couple_id);
+      } catch (e: any) {
+        setError(e.message);
+        setLoading(false);
+        return;
       }
-
-      setHasCurrentCouple(!!getCoupleId());
 
       try {
         const data = await api.getCoupleHistory();

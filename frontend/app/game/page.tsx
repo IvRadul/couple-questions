@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ensureAuthenticated, getCoupleId, getUserId } from "@/lib/auth";
+import { ensureAuthenticated, getUserId, getToken, saveSession, clearCoupleId } from "@/lib/auth";
 import { connectGameSocket } from "@/lib/websocket";
 import { api } from "@/lib/api";
 import QuestionCard from "@/components/QuestionCard";
@@ -180,6 +180,7 @@ export default function GamePage() {
       }
       case "couple_disbanded": {
         socketRef.current?.close();
+        clearCoupleId();
         router.replace("/couple");
         break;
       }
@@ -206,27 +207,41 @@ export default function GamePage() {
   useEffect(() => {
     (async () => {
       await ensureAuthenticated();
-      const coupleId = getCoupleId();
-      if (!coupleId) {
-        router.replace("/couple");
+
+      let me;
+      try {
+        me = await api.me();
+      } catch (e: any) {
+        // Не смогли подтвердить личность/статус пользователя — не пускаем
+        // дальше ни при каких обстоятельствах (fail-closed), а не молча
+        // продолжаем с устаревшими локальными данными.
+        setError(e.message || "Не удалось подключиться к серверу");
         return;
       }
-      setMyUserId(getUserId() || "");
 
-      try {
-        const me = await api.me();
-        if (!me.display_name) {
-          router.replace("/welcome");
-          return;
-        }
-        setCoins(me.coins);
-      } catch {
-        // не критично для запуска игры — просто не покажем баланс монет
+      // Держим localStorage в согласии с сервером — на случай, если пара
+      // была расформирована партнёром (couple_disbanded) или изменилась
+      // как-то ещё, пока эта вкладка была неактивна.
+      const token = getToken();
+      if (token) {
+        saveSession(token, me.id, me.couple_id);
+      }
+
+      if (!me.display_name) {
+        router.replace("/welcome");
+        return;
+      }
+      setCoins(me.coins);
+      setMyUserId(me.id);
+
+      if (!me.couple_id) {
+        router.replace("/couple");
+        return;
       }
 
       await loadPacks();
 
-      socketRef.current = connectGameSocket(coupleId, handleMessage, setStatus);
+      socketRef.current = connectGameSocket(me.couple_id, handleMessage, setStatus);
     })();
 
     return () => {

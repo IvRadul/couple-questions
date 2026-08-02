@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { ensureAuthenticated, getCoupleId } from "@/lib/auth";
+import { ensureAuthenticated, getToken, saveSession } from "@/lib/auth";
 
 export default function WelcomePage() {
   const router = useRouter();
@@ -17,9 +17,13 @@ export default function WelcomePage() {
       await ensureAuthenticated();
       try {
         const me = await api.me();
+        const token = getToken();
+        if (token) {
+          saveSession(token, me.id, me.couple_id);
+        }
         if (me.display_name) {
           // Имя уже задано (например, прямой переход по ссылке) — сразу дальше.
-          router.replace(getCoupleId() ? "/game" : "/couple");
+          router.replace(me.couple_id ? "/game" : "/couple");
           return;
         }
       } catch (e: any) {
@@ -35,8 +39,8 @@ export default function WelcomePage() {
     setBusy(true);
     setError(null);
     try {
-      await api.setDisplayName(name.trim());
-      router.replace(getCoupleId() ? "/game" : "/couple");
+      const updated = await api.setDisplayName(name.trim());
+      router.replace(updated.couple_id ? "/game" : "/couple");
     } catch (e: any) {
       setError(e.message);
       setBusy(false);

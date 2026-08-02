@@ -3,18 +3,26 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ensureAuthenticated, getCoupleId, getToken } from "@/lib/auth";
+import { ensureAuthenticated, getToken, saveSession } from "@/lib/auth";
 import { api } from "@/lib/api";
 
 type Router = ReturnType<typeof useRouter>;
 
 async function redirectAfterAuth(router: Router) {
   const me = await api.me();
+
+  // Держим localStorage в согласии с сервером — на случай, если пара была
+  // расформирована партнёром, пока эта вкладка/устройство были неактивны.
+  const token = getToken();
+  if (token) {
+    saveSession(token, me.id, me.couple_id);
+  }
+
   if (!me.display_name) {
     router.replace("/welcome");
     return;
   }
-  router.replace(getCoupleId() ? "/game" : "/couple");
+  router.replace(me.couple_id ? "/game" : "/couple");
 }
 
 export default function HomePage() {

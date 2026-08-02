@@ -29,6 +29,16 @@ export function saveSession(token: string, userId: string, coupleId: string | nu
   }
 }
 
+/**
+ * Убирает только couple_id, не трогая токен/user_id — нужно, когда пару
+ * расформировал ПАРТНЁР (мы узнаём об этом через WebSocket-уведомление
+ * couple_disbanded, а не через свой собственный вызов /couples/leave, так
+ * что нового токена у нас нет, но couple_id уже точно невалиден).
+ */
+export function clearCoupleId() {
+  localStorage.removeItem(COUPLE_ID_KEY);
+}
+
 export function clearSession() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_ID_KEY);
