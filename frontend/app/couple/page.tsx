@@ -26,6 +26,14 @@ function CouplePageContent() {
     (async () => {
       await ensureAuthenticated();
 
+      // Открыли по ссылке-приглашению (?code=123456, например из QR) — код
+      // нужно достать сразу, до любых редиректов, иначе он потеряется
+      // (например, если для начала нужно попасть на /welcome за именем).
+      const codeFromLink = searchParams.get("code")?.replace(/\D/g, "").slice(0, 6) || "";
+      if (codeFromLink.length === 6) {
+        setJoinCode(codeFromLink);
+      }
+
       let me;
       try {
         me = await api.me();
@@ -43,7 +51,7 @@ function CouplePageContent() {
       }
 
       if (!me.display_name) {
-        router.replace("/welcome");
+        router.replace(codeFromLink.length === 6 ? `/welcome?code=${codeFromLink}` : "/welcome");
         return;
       }
       if (me.couple_id) {
@@ -51,11 +59,7 @@ function CouplePageContent() {
         return;
       }
 
-      // Открыли по ссылке-приглашению (?code=123456, например из QR) —
-      // пробуем присоединиться сразу, без ручного ввода кода.
-      const codeFromLink = searchParams.get("code")?.replace(/\D/g, "").slice(0, 6) || "";
       if (codeFromLink.length === 6) {
-        setJoinCode(codeFromLink);
         setAutoJoining(true);
         try {
           await api.joinCouple(codeFromLink);

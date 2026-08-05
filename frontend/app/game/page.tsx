@@ -78,7 +78,6 @@ export default function GamePage() {
   const [achievementQueue, setAchievementQueue] = useState<AchievementPopup[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [coins, setCoins] = useState<number | null>(null);
-  const [leaving, setLeaving] = useState(false);
   const [unlockedPacks, setUnlockedPacks] = useState<PackOut[]>([]);
   const [packsLoading, setPacksLoading] = useState(true);
   const [pendingSummary, setPendingSummary] = useState<PendingSessionSummary | null>(null);
@@ -321,23 +320,6 @@ export default function GamePage() {
     loadPacks();
   }
 
-  async function handleLeaveCouple() {
-    if (leaving) return;
-    const confirmed = window.confirm(
-      "Расформировать текущую пару и создать новую? Ваши монеты и достижения сохранятся."
-    );
-    if (!confirmed) return;
-    setLeaving(true);
-    try {
-      await api.leaveCouple();
-      socketRef.current?.close();
-      router.replace("/couple");
-    } catch (e: any) {
-      setError(e.message);
-      setLeaving(false);
-    }
-  }
-
   return (
     <div className="space-y-6">
       <header className="flex items-center justify-between">
@@ -441,16 +423,6 @@ export default function GamePage() {
           onDone={handleSessionDone}
         />
       )}
-
-      <div className="text-center">
-        <button
-          onClick={handleLeaveCouple}
-          disabled={leaving}
-          className="text-xs text-gray-400 underline hover:text-red-500"
-        >
-          Расформировать пару и создать новую
-        </button>
-      </div>
 
       {achievementQueue.map((ach, idx) => (
         <AchievementToast

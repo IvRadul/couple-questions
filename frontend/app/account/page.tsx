@@ -24,6 +24,8 @@ export default function AccountPage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [leavingCouple, setLeavingCouple] = useState(false);
+
   useEffect(() => {
     (async () => {
       await ensureAuthenticated();
@@ -91,6 +93,22 @@ export default function AccountPage() {
     if (!window.confirm(message)) return;
     clearSession();
     router.replace("/");
+  }
+
+  async function handleLeaveCouple() {
+    if (leavingCouple) return;
+    const confirmed = window.confirm(
+      "Расформировать текущую пару и создать новую? Ваши монеты и достижения сохранятся, партнёр будет уведомлён."
+    );
+    if (!confirmed) return;
+    setLeavingCouple(true);
+    try {
+      await api.leaveCouple();
+      router.replace("/couple");
+    } catch (e: any) {
+      setError(e.message);
+      setLeavingCouple(false);
+    }
   }
 
   if (loading) {
@@ -200,6 +218,27 @@ export default function AccountPage() {
         {error && <p className="text-red-500 text-sm">{error}</p>}
         {success && <p className="text-green-600 text-sm">{success}</p>}
       </div>
+
+      {me?.couple_id && (
+        <div className="card text-center space-y-2">
+          <p className="font-semibold">Текущая пара</p>
+          <p className="text-sm text-gray-500">
+            Расформировать пару можно в любой момент — партнёр будет уведомлён, а ваш прогресс (монеты,
+            достижения) сохранится. После этого можно создать новую пару или{" "}
+            <Link href="/couples" className="text-primary underline">
+              переподключиться к старой
+            </Link>
+            .
+          </p>
+          <button
+            onClick={handleLeaveCouple}
+            disabled={leavingCouple}
+            className="text-sm text-red-500 underline hover:text-red-600"
+          >
+            Расформировать пару и создать новую
+          </button>
+        </div>
+      )}
 
       <div className="text-center">
         <button onClick={handleLogout} className="text-xs text-gray-400 underline hover:text-red-500">

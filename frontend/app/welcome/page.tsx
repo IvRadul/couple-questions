@@ -1,16 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { ensureAuthenticated, getToken, saveSession } from "@/lib/auth";
 
-export default function WelcomePage() {
+function WelcomePageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(true);
+
+  // Код приглашения (если пришли сюда за именем по пути /couple?code=... —
+  // см. couple/page.tsx) нужно донести обратно до /couple, иначе он
+  // потеряется и придётся вводить его руками.
+  const codeFromLink = searchParams.get("code")?.replace(/\D/g, "").slice(0, 6) || "";
+  const coupleTarget = codeFromLink.length === 6 ? `/couple?code=${codeFromLink}` : "/couple";
 
   useEffect(() => {
     (async () => {
@@ -23,7 +30,7 @@ export default function WelcomePage() {
         }
         if (me.display_name) {
           // Имя уже задано (например, прямой переход по ссылке) — сразу дальше.
-          router.replace(me.couple_id ? "/game" : "/couple");
+          router.replace(me.couple_id ? "/game" : coupleTarget);
           return;
         }
       } catch (e: any) {
@@ -32,6 +39,7 @@ export default function WelcomePage() {
         setChecking(false);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -40,7 +48,7 @@ export default function WelcomePage() {
     setError(null);
     try {
       const updated = await api.setDisplayName(name.trim());
-      router.replace(updated.couple_id ? "/game" : "/couple");
+      router.replace(updated.couple_id ? "/game" : coupleTarget);
     } catch (e: any) {
       setError(e.message);
       setBusy(false);
@@ -75,5 +83,13 @@ export default function WelcomePage() {
 
       {error && <p className="text-red-500 text-sm">{error}</p>}
     </div>
+  );
+}
+
+export default function WelcomePage() {
+  return (
+    <Suspense fallback={<p className="text-center text-gray-400">Загрузка...</p>}>
+      <WelcomePageContent />
+    </Suspense>
   );
 }
